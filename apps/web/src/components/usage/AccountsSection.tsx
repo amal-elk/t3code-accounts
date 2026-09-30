@@ -21,6 +21,7 @@ import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   AccountsEditorDialog,
   ACCOUNT_EVENT_LABELS,
@@ -73,16 +74,11 @@ function Quota({
 }) {
   const percent = window ? remainingPercent(window) : null;
   return (
-    <div className="min-w-0">
-      <div className="text-xl leading-none font-semibold tabular-nums sm:text-2xl">
+    <div className="flex min-w-0 items-baseline gap-1.5 whitespace-nowrap">
+      <span className="text-base leading-none font-semibold tabular-nums">
         {percent === null ? "—" : `${percent}%`}
-      </div>
-      <div className="mt-1 text-3xs text-muted-foreground">{label} left</div>
-      {percent !== null ? (
-        <div className="mt-1.5 h-1 max-w-16 rounded-full bg-muted">
-          <div className="h-full rounded-full bg-foreground/65" style={{ width: `${percent}%` }} />
-        </div>
-      ) : null}
+      </span>
+      <span className="text-3xs text-muted-foreground">{label}</span>
     </div>
   );
 }
@@ -213,7 +209,7 @@ export function AccountsSection({
       presentation.serverConfig && presentation.serverConfig.accountsVersion !== 1,
   );
   return (
-    <div className="min-w-0 space-y-9 pb-6">
+    <div className="min-w-0 space-y-5 pb-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold">Accounts</h2>
@@ -275,7 +271,7 @@ export function AccountsSection({
         );
         return (
           <section key={service} aria-label={`${service} accounts`} className="min-w-0">
-            <div className="mb-3 flex items-center gap-2">
+            <div className="mb-1.5 flex items-center gap-2">
               <h3 className="text-base font-semibold">{service}</h3>
               {serviceAccounts.length > 0 ? (
                 <span className="text-xs text-muted-foreground">
@@ -301,7 +297,7 @@ export function AccountsSection({
               <div className="min-w-0 border-t border-border/60">
                 <div
                   aria-hidden
-                  className="hidden grid-cols-[6rem_minmax(0,1fr)_minmax(13rem,auto)] gap-4 py-2 text-xs text-muted-foreground sm:grid"
+                  className="hidden grid-cols-[5.5rem_minmax(0,1fr)_minmax(13rem,auto)] gap-3 py-1.5 text-xs text-muted-foreground sm:grid"
                 >
                   <span>Remaining</span>
                   <span>Account</span>
@@ -328,10 +324,23 @@ export function AccountsSection({
                     selected.get(account.trigger.environmentId)?.serverConfig?.accountsVersion ===
                       1;
                   const notTriggered = accountResetNotTriggered(account, now);
+                  const resetDetail = notTriggered
+                    ? triggerEnabled
+                      ? "Sends “test” to a small supported model"
+                      : "Connect this account to trigger its timer"
+                    : account.resetSource === "saved"
+                      ? "Saved date"
+                      : account.limits?.checkedAt
+                        ? `Updated ${exactTimestamp(account.limits.checkedAt, timeZone)}`
+                        : "No reported reset date";
+                  const hasSecondaryDetails =
+                    (service === "Claude Code" && session && session !== main) ||
+                    selected.size > 1 ||
+                    account.limits?.unavailable;
                   return (
                     <div
                       key={account.id}
-                      className="grid min-w-0 grid-cols-[4.5rem_minmax(0,1fr)] items-start gap-x-3 gap-y-1 border-t border-border/45 py-3 first:border-t-0 sm:grid-cols-[6rem_minmax(0,1fr)_minmax(13rem,auto)] sm:items-center sm:gap-x-4"
+                      className="grid min-w-0 grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-0.5 border-t border-border/45 py-1.5 first:border-t-0 sm:grid-cols-[5.5rem_minmax(0,1fr)_minmax(13rem,auto)]"
                     >
                       <div className="row-span-2 sm:row-span-1">
                         <Quota window={main} label={weeklyLabel} />
@@ -360,32 +369,34 @@ export function AccountsSection({
                             <PencilIcon />
                           </Button>
                         </div>
-                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                          {service === "Claude Code" && session && session !== main ? (
-                            <span>
-                              Session {remainingPercent(session)}%
-                              {session.resetsAt
-                                ? ` · ${exactTimestamp(session.resetsAt, timeZone)}`
-                                : ""}
-                            </span>
-                          ) : null}
-                          {selected.size > 1 ? <span>{account.environmentLabel}</span> : null}
-                          {account.limits?.unavailable ? (
-                            <span>
-                              Usage unavailable
-                              {account.limits.unavailable.reason === "probeFailed"
-                                ? " · last reported values"
-                                : ""}
-                            </span>
-                          ) : null}
-                        </div>
+                        {hasSecondaryDetails ? (
+                          <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                            {service === "Claude Code" && session && session !== main ? (
+                              <span>
+                                Session {remainingPercent(session)}%
+                                {session.resetsAt
+                                  ? ` · ${exactTimestamp(session.resetsAt, timeZone)}`
+                                  : ""}
+                              </span>
+                            ) : null}
+                            {selected.size > 1 ? <span>{account.environmentLabel}</span> : null}
+                            {account.limits?.unavailable ? (
+                              <span>
+                                Usage unavailable
+                                {account.limits.unavailable.reason === "probeFailed"
+                                  ? " · last reported values"
+                                  : ""}
+                              </span>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </div>
                       <div className="col-start-2 min-w-0 text-xs sm:col-start-auto sm:text-right">
                         {notTriggered ? (
-                          <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                          <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
                             <span
                               aria-label="Reset, not triggered · manually confirmed"
-                              className="rounded-full border border-warning/25 bg-warning-surface px-2 py-1 text-warning-foreground"
+                              className="rounded-full border border-warning/25 bg-warning-surface px-2 py-0.5 text-warning-foreground"
                             >
                               Reset, not triggered
                             </span>
@@ -399,21 +410,18 @@ export function AccountsSection({
                             </Button>
                           </div>
                         ) : (
-                          <span className="font-medium tabular-nums">
-                            {account.resetAt ? exactTimestamp(account.resetAt, timeZone) : "—"}
-                          </span>
+                          <Tooltip>
+                            <TooltipTrigger render={<span tabIndex={0} />}>
+                              <span className="font-medium tabular-nums">
+                                {account.resetAt ? exactTimestamp(account.resetAt, timeZone) : "—"}
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipPopup>{resetDetail}</TooltipPopup>
+                          </Tooltip>
                         )}
-                        <div className="mt-1 text-3xs text-muted-foreground">
-                          {notTriggered
-                            ? triggerEnabled
-                              ? "Sends “test” to a small supported model"
-                              : "Connect this account to trigger its timer"
-                            : account.resetSource === "saved"
-                              ? "Saved date"
-                              : account.limits?.checkedAt
-                                ? `Updated ${exactTimestamp(account.limits.checkedAt, timeZone)}`
-                                : "No reported reset date"}
-                        </div>
+                        {notTriggered ? (
+                          <div className="mt-0.5 text-3xs text-muted-foreground">{resetDetail}</div>
+                        ) : null}
                         {statuses[account.id] ? (
                           <p role="status" className="mt-1 max-w-sm text-xs text-muted-foreground">
                             {statuses[account.id]}
@@ -490,7 +498,7 @@ export function AccountsSection({
               }}
             />
             {serviceNotes.length > 0 ? (
-              <div className="mt-4 space-y-2">
+              <div className="mt-2 space-y-1">
                 {serviceNotes.map(({ id, environmentId, note }) => (
                   <div
                     key={`${environmentId}:${id}`}
@@ -549,8 +557,8 @@ function DateGroups({
     groups.set(key, [...(groups.get(key) ?? []), entry]);
   }
   return (
-    <div className="mt-5">
-      <h4 className="mb-2 text-xs font-medium text-muted-foreground">{title}</h4>
+    <div className="mt-3">
+      <h4 className="mb-1 text-xs font-medium text-muted-foreground">{title}</h4>
       {[...groups].map(([key, items]) => {
         const first = items[0];
         if (!first) return null;
@@ -558,7 +566,7 @@ function DateGroups({
         return (
           <div
             key={key}
-            className="grid min-w-0 gap-x-5 gap-y-2 border-t border-border/45 py-3 sm:grid-cols-[8rem_minmax(0,1fr)]"
+            className="grid min-w-0 gap-x-3 gap-y-1 border-t border-border/45 py-1.5 sm:grid-cols-[7rem_minmax(0,1fr)]"
           >
             <div className="text-xs font-medium tabular-nums">
               <span>{calendarLabel(first.date)}</span>
@@ -566,7 +574,7 @@ function DateGroups({
                 <span className="ms-2 text-3xs text-warning-foreground">Past date</span>
               ) : null}
             </div>
-            <div className="grid min-w-0 gap-x-5 gap-y-2 lg:grid-cols-2">
+            <div className="grid min-w-0 gap-x-3 gap-y-1 lg:grid-cols-2">
               {items.map((entry) => (
                 <div
                   key={`${entry.environmentId}:${entry.id}`}
