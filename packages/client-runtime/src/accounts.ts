@@ -116,6 +116,7 @@ export function primaryAccountWindow(limits: ServerProviderUsageLimits | undefin
         !window.id.startsWith("seven_day_") &&
         !window.label.includes("·"),
     ) ??
+    windows.find((window) => window.kind === "monthly" && window.id === "totalPercentUsed") ??
     windows.find((window) => window.kind === "monthly") ??
     windows.find((window) => window.kind === "session") ??
     windows.find((window) => window.kind === "other")

@@ -79,6 +79,25 @@ const creditEvent = (date: string, overrides: Partial<LedgerEvent> = {}): Ledger
 const collectDates = (map: ReadonlyMap<EnvironmentId, AccountsPresentation>) =>
   collectAccountDates(map, collectAccounts(map, now), "America/Los_Angeles", now);
 
+it("uses Cursor's overall monthly allowance ahead of individual model groups", () => {
+  const overall = {
+    id: "totalPercentUsed",
+    kind: "monthly" as const,
+    label: "Overall",
+    usedPercent: 8.5,
+    resetsAt: "2026-10-20T05:04:58Z",
+  };
+  const cursorLimits = {
+    checkedAt: limits.checkedAt,
+    windows: [
+      { ...overall, id: "apiPercentUsed", label: "Other Models", usedPercent: 1.1 },
+      { ...overall, id: "autoPercentUsed", label: "Cursor Models", usedPercent: 9.7 },
+      overall,
+    ],
+  };
+  expect(primaryAccountWindow(cursorLimits)).toBe(overall);
+});
+
 describe("Accounts view selection", () => {
   it("keeps signed-in accounts when usage is unavailable and never creates a fresh-reset state from 100%", () => {
     const rows = collectAccounts(
