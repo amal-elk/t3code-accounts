@@ -30,6 +30,20 @@ import {
 } from "./AccountsEditors";
 
 const SERVICE_ORDER = ["Codex", "Claude Code", "Cursor", "Linear"];
+const SERVICE_ACCENTS = new Map([
+  [
+    "Codex",
+    "[--account-accent:var(--color-blue-600)] dark:[--account-accent:var(--color-blue-400)]",
+  ],
+  [
+    "Claude Code",
+    "[--account-accent:var(--color-orange-700)] dark:[--account-accent:var(--color-orange-400)]",
+  ],
+  [
+    "Cursor",
+    "[--account-accent:var(--color-teal-700)] dark:[--account-accent:var(--color-teal-400)]",
+  ],
+]);
 
 function SensitiveLabel({ value, reveal }: { readonly value: string; readonly reveal: boolean }) {
   return !reveal && value.includes("@") ? (
@@ -81,7 +95,7 @@ function Quota({
   const percent = window ? remainingPercent(window) : null;
   return (
     <div className="flex min-w-0 items-baseline gap-1.5 whitespace-nowrap">
-      <span className="text-base leading-none font-semibold tabular-nums">
+      <span className="text-base leading-none font-semibold text-(--account-accent) tabular-nums">
         {percent === null ? "—" : `${percent}%`}
       </span>
       <span className="text-3xs text-muted-foreground">{label}</span>
@@ -276,9 +290,13 @@ export function AccountsSection({
           (entry) => accountService(entry.note.service) === service,
         );
         return (
-          <section key={service} aria-label={`${service} accounts`} className="min-w-0">
+          <section
+            key={service}
+            aria-label={`${service} accounts`}
+            className={`min-w-0 ${SERVICE_ACCENTS.has(service) ? "border-s-2 border-s-(--account-accent) ps-3" : ""} ${SERVICE_ACCENTS.get(service) ?? "[--account-accent:var(--foreground)]"}`}
+          >
             <div className="mb-1.5 flex items-center gap-2">
-              <h3 className="text-base font-semibold">{service}</h3>
+              <h3 className="text-base font-semibold text-(--account-accent)">{service}</h3>
               {serviceAccounts.length > 0 ? (
                 <span className="text-xs text-muted-foreground">
                   {serviceAccounts.length} {serviceAccounts.length === 1 ? "account" : "accounts"}
@@ -564,7 +582,7 @@ function DateGroups({
   }
   return (
     <div className="mt-3">
-      <h4 className="mb-1 text-xs font-medium text-muted-foreground">{title}</h4>
+      <h4 className="mb-1 text-xs font-medium text-(--account-accent)">{title}</h4>
       {[...groups].map(([key, items]) => {
         const first = items[0];
         if (!first) return null;
@@ -574,7 +592,7 @@ function DateGroups({
             key={key}
             className="grid min-w-0 gap-x-3 gap-y-1 border-t border-border/45 py-1.5 sm:grid-cols-[7rem_minmax(0,1fr)]"
           >
-            <div className="text-xs font-medium tabular-nums">
+            <div className="text-xs font-medium text-(--account-accent) tabular-nums">
               <span>{calendarLabel(first.date)}</span>
               {overdue ? (
                 <span className="ms-2 text-3xs text-warning-foreground">Past date</span>
