@@ -65,6 +65,12 @@ function calendarLabel(date: string) {
   }).format(new Date(`${date}T12:00:00Z`));
 }
 
+function twelveHourTime(time: string) {
+  const [hours, minutes] = time.split(":");
+  const hour = Number(hours);
+  return `${hour % 12 || 12}:${minutes} ${hour < 12 ? "AM" : "PM"}`;
+}
+
 function Quota({
   window,
   label,
@@ -574,24 +580,28 @@ function DateGroups({
                 <span className="ms-2 text-3xs text-warning-foreground">Past date</span>
               ) : null}
             </div>
-            <div className="grid min-w-0 gap-x-3 gap-y-1 lg:grid-cols-2">
+            <div className="grid min-w-0 gap-y-0.5">
               {items.map((entry) => (
                 <div
                   key={`${entry.environmentId}:${entry.id}`}
                   className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs"
                 >
                   <SensitiveLabel value={entry.account ?? entry.label} reveal={revealEmails} />
+                  {entry.time ? (
+                    <Tooltip>
+                      <TooltipTrigger render={<span tabIndex={0} />}>
+                        <span className="whitespace-nowrap text-muted-foreground tabular-nums">
+                          {twelveHourTime(entry.time)}
+                        </span>
+                      </TooltipTrigger>
+                      <TooltipPopup>
+                        {entry.timeZone}
+                        {entry.timeUnavailable ? " · time unavailable on this date" : ""}
+                      </TooltipPopup>
+                    </Tooltip>
+                  ) : null}
                   {entry.account && entry.kind !== "bankedReset" && entry.kind !== "cloudCredit" ? (
                     <span className="text-muted-foreground">{entry.label}</span>
-                  ) : null}
-                  {entry.amount ? (
-                    <span className="text-muted-foreground">{entry.amount}</span>
-                  ) : null}
-                  {entry.time ? (
-                    <span className="text-muted-foreground tabular-nums">
-                      {entry.time} · {entry.timeZone}
-                      {entry.timeUnavailable ? " · time unavailable on this date" : ""}
-                    </span>
                   ) : null}
                   {entry.origin === "saved" ? (
                     <Button
@@ -602,9 +612,7 @@ function DateGroups({
                     >
                       <PencilIcon />
                     </Button>
-                  ) : (
-                    <span className="text-3xs text-muted-foreground">Reported</span>
-                  )}
+                  ) : null}
                   {entry.saved?.recurrence && entry.saved.recurrence !== "none" ? (
                     <span className="text-3xs text-muted-foreground">{entry.saved.recurrence}</span>
                   ) : null}
