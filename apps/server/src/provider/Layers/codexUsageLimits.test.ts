@@ -178,19 +178,73 @@ describe("codexRateLimitsFailureMessage", () => {
 });
 
 describe("codexResetCreditsToContract", () => {
-  it("counts available credits and reports the soonest expiry", () => {
+  const nowMs = Date.parse("2026-07-01T00:00:00.000Z");
+
+  it("preserves every available credit and reports the soonest expiry", () => {
     expect(
-      codexResetCreditsToContract({
-        availableCount: 2,
-        credits: [
-          { status: "available", expiresAt: 1_784_500_000 },
-          { status: "redeemed", expiresAt: 1_700_000_000 },
-          { status: "available", expiresAt: 1_784_000_000 },
-        ],
-      }),
-    ).toEqual({ availableCount: 2, nextExpiresAt: "2026-07-14T03:33:20.000Z" });
-    expect(codexResetCreditsToContract({ availableCount: 0 })).toEqual({ availableCount: 0 });
-    expect(codexResetCreditsToContract(null)).toBeUndefined();
+      codexResetCreditsToContract(
+        {
+          availableCount: 2,
+          credits: [
+            { id: "later", status: "available", expiresAt: 1_784_500_000 },
+            { id: "used", status: "redeemed", expiresAt: 1_700_000_000 },
+            { id: "first", status: "available", expiresAt: 1_784_000_000 },
+          ],
+        },
+        nowMs,
+      ),
+    ).toEqual({
+      availableCount: 2,
+      nextExpiresAt: "2026-07-14T03:33:20.000Z",
+      credits: [
+        { id: "first", count: 1, expiresAt: "2026-07-14T03:33:20.000Z" },
+        { id: "later", count: 1, expiresAt: "2026-07-19T22:26:40.000Z" },
+      ],
+    });
+    expect(codexResetCreditsToContract({ availableCount: 0 }, nowMs)).toEqual({
+      availableCount: 0,
+    });
+    expect(codexResetCreditsToContract(null, nowMs)).toBeUndefined();
+  });
+
+  it("keeps credits without an expiry and excludes stale or invalid detail rows", () => {
+    expect(
+      codexResetCreditsToContract(
+        {
+          availableCount: 2,
+          credits: [
+            { id: "no_expiry", status: "available", expiresAt: null },
+            { id: "expiry_omitted", status: "available" },
+            { id: "expired", status: "available", expiresAt: nowMs / 1000 },
+            { id: "invalid", status: "available", expiresAt: Number.NaN },
+            { id: "", status: "available" },
+          ],
+        },
+        nowMs,
+      ),
+    ).toEqual({
+      availableCount: 2,
+      credits: [
+        { id: "no_expiry", count: 1 },
+        { id: "expiry_omitted", count: 1 },
+      ],
+    });
+  });
+
+  it("distinguishes omitted details from an empty or capped list", () => {
+    expect(codexResetCreditsToContract({ availableCount: 2, credits: null }, nowMs)).toEqual({
+      availableCount: 2,
+    });
+    expect(codexResetCreditsToContract({ availableCount: 0, credits: [] }, nowMs)).toEqual({
+      availableCount: 0,
+      credits: [],
+    });
+    expect(
+      codexResetCreditsToContract(
+        { availableCount: 2, credits: [{ id: "known", status: "available" }] },
+        nowMs,
+      ),
+    ).toEqual({ availableCount: 2, credits: [{ id: "known", count: 1 }] });
   });
 
   it("rides along on the probe's limits", () => {

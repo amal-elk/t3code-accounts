@@ -193,6 +193,8 @@ import * as NativeTelemetryClient from "./resourceTelemetry/NativeTelemetryClien
 import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts";
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageService from "./usage/UsageService.ts";
+import * as ResetTimerTrigger from "./usage/ResetTimerTrigger.ts";
+import * as LinearAccounts from "./usage/LinearAccounts.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as Data from "effect/Data";
 
@@ -526,6 +528,8 @@ const buildAppUnderTest = (options?: {
     providerRegistry?: Partial<ProviderRegistry.ProviderRegistry["Service"]>;
     modelManifest?: Partial<ModelManifest.ModelManifest["Service"]>;
     usageLimitSources?: Partial<UsageLimitSources.UsageLimitSources["Service"]>;
+    resetTimerTrigger?: Partial<ResetTimerTrigger.ResetTimerTrigger["Service"]>;
+    linearAccounts?: Partial<LinearAccounts.LinearAccounts["Service"]>;
     providerService?: Partial<ProviderService.ProviderService["Service"]>;
     providerAuth?: Partial<ProviderAuthService["Service"]>;
     providerInstanceRegistry?: Partial<ProviderInstanceRegistry["Service"]>;
@@ -1082,7 +1086,19 @@ const buildAppUnderTest = (options?: {
 
     const appLayer = servedRoutesLayer.pipe(
       Layer.provide(resourceTelemetryLayer),
-      Layer.provide(UsageService.layerTest),
+      Layer.provide(
+        Layer.mergeAll(
+          UsageService.layerTest,
+          Layer.mock(ResetTimerTrigger.ResetTimerTrigger)({
+            trigger: () => Effect.succeed({ model: "test-model" }),
+            ...options?.layers?.resetTimerTrigger,
+          }),
+          Layer.mock(LinearAccounts.LinearAccounts)({
+            read: Effect.succeed({ checkedAt: "2026-09-29T00:00:00.000Z", alerts: [] }),
+            ...options?.layers?.linearAccounts,
+          }),
+        ),
+      ),
       Layer.provide(
         Layer.mock(AnalyticsService.AnalyticsService)({
           record: () => Effect.void,
@@ -5327,10 +5343,58 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.equal(response.environment.environmentId, testEnvironmentDescriptor.environmentId);
       assert.equal(response.auth.policy, "desktop-managed-local");
+      assert.equal(response.accountsVersion, 1);
       assert.equal(response.shellResumeCompletionMarker, true);
       assert.isUndefined(response.shellRevealInFileManager);
       assert.isUndefined(response.shellRevealInFileManagerKind);
       assert.equal(response.threadResumeCompletionMarker, true);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("routes Accounts actions to the selected account and reads workspace billing", () =>
+    Effect.gen(function* () {
+      const expected = {
+        instanceId: ProviderInstanceId.make("codex_work"),
+        ledgerAccountId: "work-account",
+        expectedAccountEmail: "person@example.com",
+      };
+      let triggerCalls = 0;
+      yield* buildAppUnderTest({
+        layers: {
+          resetTimerTrigger: {
+            trigger: (input) =>
+              Effect.sync(() => {
+                assert.deepEqual(input, expected);
+                triggerCalls++;
+                return { model: "small-model" };
+              }),
+          },
+          linearAccounts: {
+            read: Effect.succeed({
+              checkedAt: "2026-09-29T00:00:00.000Z",
+              workspace: {
+                id: "workspace",
+                name: "Example",
+                nextBillingAt: "2026-10-10T00:00:00.000Z",
+              },
+              alerts: [],
+            }),
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const result = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const trigger = yield* client[WS_METHODS.providerTriggerResetTimer](expected);
+            const billing = yield* client[WS_METHODS.serverGetLinearAccounts]({});
+            return { trigger, billing };
+          }),
+        ),
+      );
+      assert.equal(triggerCalls, 1);
+      assert.equal(result.trigger.model, "small-model");
+      assert.equal(result.billing.workspace?.nextBillingAt, "2026-10-10T00:00:00.000Z");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

@@ -4,15 +4,13 @@ import { getLocalStorageItem, setLocalStorageItem } from "../../hooks/useLocalSt
 
 const STORAGE_KEY = "t3code:usage-page-preferences:v1";
 const UsagePagePreferencesSchema = Schema.Struct({
-  metric: Schema.Literals(["cost", "tokens", "limits"]),
+  metric: Schema.Literals(["cost", "tokens", "limits", "accounts"]),
   windowDays: Schema.Literals([1, 7, 30, 90]),
 });
 export type UsagePagePreferences = typeof UsagePagePreferencesSchema.Type;
 
-// Limits is what most people open the page for (how much subscription quota is
-// left, and when it resets), so it is the first-visit default; the last picked
-// tab sticks after that.
-const DEFAULT_PREFERENCES: UsagePagePreferences = { metric: "limits", windowDays: 30 };
+// The account list is the first-visit default; the last picked tab sticks.
+const DEFAULT_PREFERENCES: UsagePagePreferences = { metric: "accounts", windowDays: 30 };
 
 export function readUsagePagePreferences(): UsagePagePreferences {
   try {

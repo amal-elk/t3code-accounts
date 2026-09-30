@@ -85,6 +85,11 @@ export interface ProviderInstance {
     ProviderConsumeResetCreditOutcome,
     ProviderDriverError
   >;
+  /** Tool-free, bounded inference on this instance's signed-in account. */
+  readonly triggerResetTimer?: (input: {
+    readonly model: string;
+    readonly expectedAccountEmail: string;
+  }) => Effect.Effect<void, ProviderDriverError>;
   readonly adapter: ProviderAdapterShape<ProviderAdapterError>;
   readonly textGeneration: TextGeneration.TextGeneration["Service"];
   readonly auth?: ProviderAuthController;

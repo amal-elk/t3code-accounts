@@ -10,7 +10,8 @@ const state = vi.hoisted(() => ({
   refreshProviders: vi.fn(async () => undefined),
   metric: "limits",
 }));
-vi.mock("@effect/atom-react", () => ({
+vi.mock("@effect/atom-react", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@effect/atom-react")>()),
   useAtomValue: (atom: unknown) =>
     atom === "keybindings" ? DEFAULT_RESOLVED_KEYBINDINGS : state.presentations,
 }));

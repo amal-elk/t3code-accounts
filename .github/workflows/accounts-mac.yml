@@ -1,0 +1,223 @@
+name: T3 Accounts Mac build
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Fork branch or commit to build
+        required: true
+        default: main
+        type: string
+      signed:
+        description: Sign and notarize using this fork's Apple credentials
+        default: false
+        type: boolean
+      publish:
+        description: Publish a signed build to the fork's update feed
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: accounts-mac-${{ inputs.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.repository == 'amal-elk/t3code-accounts'
+    runs-on: macos-15
+    timeout-minutes: 60
+    outputs:
+      version: ${{ steps.identity.outputs.version }}
+      upstream: ${{ steps.identity.outputs.upstream }}
+      commit: ${{ steps.identity.outputs.commit }}
+    steps:
+      # Public checkout without credentials avoids cleanup traversing orphaned
+      # gitlinks in the upstream vendored reference tree.
+      - name: Checkout selected fork revision
+        env:
+          CHECKOUT_REF: ${{ inputs.ref }}
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "$CHECKOUT_REF"
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git checkout --detach FETCH_HEAD
+
+      - name: Validate fork version and release mode
+        id: identity
+        env:
+          PUBLISH_BUILD: ${{ inputs.publish }}
+          SIGNED_BUILD: ${{ inputs.signed }}
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = arm64
+          if [[ "$PUBLISH_BUILD" == true && "$SIGNED_BUILD" != true ]]; then
+            echo "The Mac update feed requires a signed build; use the build artifact for an unsigned preview." >&2
+            exit 1
+          fi
+          node --input-type=module <<'NODE'
+          import fs from "node:fs";
+          const metadata = JSON.parse(fs.readFileSync("apps/desktop/package.json", "utf8"));
+          const version = metadata.version;
+          const match = /^(\d+\.\d+\.\d+)-accounts\.\d+$/.exec(version);
+          if (!match || metadata.productName !== "T3 Accounts") {
+            throw new Error("Build a committed T3 Accounts version, such as 0.0.44-accounts.1.");
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\nupstream=v${match[1]}\n`);
+          NODE
+          echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          run-install: false
+
+      - name: Install build dependencies
+        run: vp install --frozen-lockfile --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin
+
+      - name: Align bundled package versions
+        env:
+          ACCOUNTS_VERSION: ${{ steps.identity.outputs.version }}
+        run: node scripts/update-release-package-versions.ts "$ACCOUNTS_VERSION"
+
+      - name: Check affected packages
+        run: vp run --concurrency-limit 2 --filter=@t3tools/contracts --filter=@t3tools/shared --filter=@t3tools/client-runtime --filter=@t3tools/web --filter=t3 --filter=@t3tools/desktop --filter=@t3tools/scripts typecheck
+
+      - name: Test Accounts behavior and desktop isolation
+        run: |
+          vp test run \
+            packages/contracts/src/accountLedger.test.ts \
+            packages/contracts/src/providerUsageLimits.test.ts \
+            packages/shared/src/providerAuthReturnUrl.test.ts \
+            packages/shared/src/codexAuthHandoff.test.ts \
+            apps/web/src/components/usage/UsagePage.test.tsx \
+            apps/web/src/components/usage/UsagePage.refresh.test.tsx \
+            apps/web/src/components/usage/usagePagePreferences.test.ts \
+            apps/web/src/components/usage/usageShortcuts.test.ts \
+            packages/client-runtime/src/accounts.test.ts \
+            packages/shared/src/cliRelease.test.ts \
+            packages/shared/src/serverSettings.test.ts \
+            apps/server/src/os-jank.test.ts \
+            apps/server/src/usage/ResetTimerTrigger.test.ts \
+            apps/server/src/usage/LinearAccounts.test.ts \
+            apps/server/src/usage/cliproxyResetTimer.test.ts \
+            apps/server/src/provider/Drivers/ResetTimerInference.test.ts \
+            apps/server/src/provider/Layers/codexUsageLimits.test.ts \
+            apps/server/src/provider/Layers/claudeResetCredits.test.ts \
+            apps/server/src/usage/cliproxyApi.test.ts \
+            apps/server/src/cloud/bootService.test.ts \
+            apps/desktop/scripts/electron-launcher.test.mjs \
+            apps/desktop/src/app/DesktopAppIdentity.test.ts \
+            apps/desktop/src/app/DesktopEnvironment.test.ts \
+            apps/desktop/src/app/DesktopEarlyElectronStartup.test.ts \
+            apps/desktop/src/app/DesktopClerk.test.ts \
+            apps/desktop/src/electron/ElectronProtocol.test.ts \
+            scripts/build-desktop-artifact.test.ts \
+            scripts/resolve-accounts-package-conflicts.test.ts
+          vp test run apps/server/src/server.test.ts -t 'routes Accounts actions|bootstrapped browser session cookie'
+          vp test run apps/server/src/serverSettings.test.ts -t 'persists account dates|persists atomic reset'
+
+      - name: Package Mac installer and updater assets
+        env:
+          ACCOUNTS_VERSION: ${{ steps.identity.outputs.version }}
+          SIGNED_BUILD: ${{ inputs.signed }}
+          T3CODE_DESKTOP_UPDATE_REPOSITORY: amal-elk/t3code-accounts
+          CSC_LINK: ${{ secrets.ACCOUNTS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.ACCOUNTS_CSC_KEY_PASSWORD }}
+          APPLE_API_KEY: ${{ secrets.ACCOUNTS_APPLE_API_KEY }}
+          APPLE_API_KEY_ID: ${{ secrets.ACCOUNTS_APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.ACCOUNTS_APPLE_API_ISSUER }}
+          APPLE_TEAM_ID: ${{ vars.ACCOUNTS_APPLE_TEAM_ID }}
+          MACOS_PROVISIONING_PROFILE: ${{ secrets.ACCOUNTS_MACOS_PROVISIONING_PROFILE }}
+          T3CODE_CLERK_PUBLISHABLE_KEY: ${{ vars.ACCOUNTS_CLERK_PUBLISHABLE_KEY }}
+          T3CODE_CLERK_PASSKEY_RP_DOMAINS: ${{ vars.ACCOUNTS_CLERK_PASSKEY_RP_DOMAINS }}
+        run: |
+          set -euo pipefail
+          args=(--platform mac --target dmg --arch arm64 --build-version "$ACCOUNTS_VERSION")
+          if [[ "$SIGNED_BUILD" == true ]]; then
+            for name in CSC_LINK CSC_KEY_PASSWORD APPLE_API_KEY APPLE_API_KEY_ID APPLE_API_ISSUER APPLE_TEAM_ID MACOS_PROVISIONING_PROFILE; do
+              if [[ -z "${!name}" ]]; then
+                echo "Missing fork signing configuration: $name" >&2
+                exit 1
+              fi
+            done
+            key_path="$RUNNER_TEMP/accounts-apple-key.p8"
+            printf '%s' "$APPLE_API_KEY" > "$key_path"
+            export APPLE_API_KEY="$key_path"
+            profile_path="$RUNNER_TEMP/accounts.provisionprofile"
+            printf '%s' "$MACOS_PROVISIONING_PROFILE" | base64 -D > "$profile_path"
+            security cms -D -i "$profile_path" >/dev/null
+            export T3CODE_APPLE_TEAM_ID="$APPLE_TEAM_ID"
+            export T3CODE_MACOS_PROVISIONING_PROFILE="$profile_path"
+            args+=(--signed)
+          fi
+          node scripts/build-desktop-artifact.ts "${args[@]}"
+          test -f release/latest-mac.yml
+          compgen -G 'release/T3-Accounts-*.dmg' >/dev/null
+          compgen -G 'release/T3-Accounts-*.zip' >/dev/null
+          compgen -G 'release/*.blockmap' >/dev/null
+          (cd release && shasum -a 256 *.dmg *.zip *.blockmap latest-mac.yml > SHA256SUMS)
+
+      - name: Save installer and updater assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: accounts-mac-arm64
+          if-no-files-found: error
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.blockmap
+            release/latest-mac.yml
+            release/SHA256SUMS
+
+  publish:
+    if: inputs.publish && inputs.signed
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Retrieve checked Mac build
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: accounts-mac-arm64
+          path: release
+
+      - name: Publish complete fork release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ACCOUNTS_VERSION: ${{ needs.build.outputs.version }}
+          UPSTREAM_VERSION: ${{ needs.build.outputs.upstream }}
+          FORK_COMMIT: ${{ needs.build.outputs.commit }}
+        run: |
+          set -euo pipefail
+          test -f release/latest-mac.yml
+          (cd release && sha256sum --check SHA256SUMS)
+          tag="accounts-v$ACCOUNTS_VERSION"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "Release $tag already exists. Inspect it before retrying; existing releases are never overwritten." >&2
+            exit 1
+          fi
+          {
+            printf 'T3 Accounts %s for Apple silicon.\n\n' "$ACCOUNTS_VERSION"
+            printf 'Upstream baseline: %s\nFork commit: %s\n' "$UPSTREAM_VERSION" "$FORK_COMMIT"
+            printf '\nIncludes the Mac installer, ZIP, update manifest, blockmaps, and checksums from the same checked build.\n'
+          } > release-notes.md
+          gh release create "$tag" release/* --repo "$GITHUB_REPOSITORY" --target "$FORK_COMMIT" --draft --title "T3 Accounts $ACCOUNTS_VERSION" --notes-file release-notes.md
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' > published-assets.txt
+          while IFS= read -r asset; do
+            grep -Fxq "$(basename "$asset")" published-assets.txt
+          done < <(find release -maxdepth 1 -type f)
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --draft=false --latest

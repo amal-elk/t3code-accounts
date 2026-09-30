@@ -110,7 +110,7 @@ const isFutureTimestamp = (value: string, nowMs: number) => {
   );
 };
 
-/** Grants that are paused or past `ends_at` cannot be claimed and do not count. */
+/** Paused, spent or expired grants are excluded; redemption readiness stays separate. */
 export function claudeResetCreditsToContract(
   block: unknown,
   nowMs: number,
@@ -122,17 +122,35 @@ export function claudeResetCreditsToContract(
     .filter(
       (grant) =>
         !grant.paused &&
-        grant.usable_now &&
+        grant.resets_left > 0 &&
         (grant.ends_at == null || isFutureTimestamp(grant.ends_at, nowMs)),
     );
-  const next = live.find((grant) => grant.id === parsed.value.next_grant_id);
+  const usable = live.filter((grant) => grant.usable_now);
+  const next = usable.find((grant) => grant.id === parsed.value.next_grant_id);
   const nextExpiresAt = next?.ends_at ? DateTime.make(next.ends_at) : Option.none();
   return {
-    availableCount: next ? live.reduce((sum, grant) => sum + grant.resets_left, 0) : 0,
+    availableCount: next ? usable.reduce((sum, grant) => sum + grant.resets_left, 0) : 0,
     ...(Option.isSome(nextExpiresAt)
       ? { nextExpiresAt: DateTime.formatIso(nextExpiresAt.value) }
       : {}),
     ...(next ? { nextCreditId: next.id } : {}),
+    ...(parsed.value.grants !== undefined
+      ? {
+          credits: live
+            .map((grant) => ({
+              id: grant.id,
+              count: grant.resets_left,
+              ...(grant.ends_at
+                ? { expiresAt: DateTime.formatIso(DateTime.makeUnsafe(grant.ends_at)) }
+                : {}),
+            }))
+            .toSorted(
+              (a, b) =>
+                (a.expiresAt ? Date.parse(a.expiresAt) : Number.POSITIVE_INFINITY) -
+                (b.expiresAt ? Date.parse(b.expiresAt) : Number.POSITIVE_INFINITY),
+            ),
+        }
+      : {}),
   };
 }
 

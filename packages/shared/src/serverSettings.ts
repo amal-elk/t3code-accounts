@@ -176,6 +176,32 @@ function mergeSettingsEntries<Value>(
   return Object.fromEntries(next);
 }
 
+function mergeAccountLedger(
+  current: ServerSettings["accountLedger"],
+  patch: NonNullable<ServerSettingsPatch["accountLedger"]>,
+) {
+  const accounts = mergeSettingsEntries(current.accounts, patch.accounts ?? {});
+  for (const [id, expected] of Object.entries(patch.clearResetNotTriggered ?? {})) {
+    const account = accounts[id];
+    if (
+      account?.resetNotTriggered === true &&
+      account.service === expected.service &&
+      account.label === expected.label
+    ) {
+      accounts[id] = { ...account, resetNotTriggered: false };
+    }
+  }
+  return {
+    accounts,
+    events:
+      patch.events === undefined
+        ? current.events
+        : mergeSettingsEntries(current.events, patch.events),
+    notes:
+      patch.notes === undefined ? current.notes : mergeSettingsEntries(current.notes, patch.notes),
+  };
+}
+
 /**
  * Derived views of `projectSettingsOverrides` for clients that still read
  * the legacy per-key maps. Recomputed on every patch and load so they
@@ -277,6 +303,7 @@ export function applyServerSettingsPatch(
     // Merged per entry below; its `null` removals must not reach deepMerge.
     usageLimitSources: usageLimitSourcesPatch,
     usagePriceOverrides: usagePriceOverridesPatch,
+    accountLedger: accountLedgerPatch,
     // Entry replacement: deepMerge would keep keys the client meant to clear.
     projectSettingsOverrides: projectSettingsOverridesPatch,
     // Already translated into `projectSettingsOverrides` above; the legacy
@@ -389,6 +416,11 @@ export function applyServerSettingsPatch(
             current.usagePriceOverrides,
             usagePriceOverridesPatch,
           ),
+        }
+      : {}),
+    ...(accountLedgerPatch !== undefined
+      ? {
+          accountLedger: mergeAccountLedger(current.accountLedger, accountLedgerPatch),
         }
       : {}),
     ...(patch.sourceControlWriterModelSelection !== undefined

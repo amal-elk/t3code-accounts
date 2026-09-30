@@ -1,0 +1,158 @@
+name: T3 Accounts upstream release candidate
+
+on:
+  schedule:
+    - cron: "17 13 * * *"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Published stable upstream tag; blank selects the latest release
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: accounts-upstream
+  cancel-in-progress: false
+
+jobs:
+  candidate:
+    if: github.repository == 'amal-elk/t3code-accounts'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout fork main
+        env:
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags origin main
+          git checkout -b main FETCH_HEAD
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          run-install: false
+
+      - name: Install the manifest resolver from clean fork main
+        run: vp install --frozen-lockfile --filter=@t3tools/scripts...
+
+      - name: Merge a published upstream release into a candidate
+        id: candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$REQUESTED_TAG" ]]; then
+            [[ "$REQUESTED_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+            endpoint="repos/pingdotgg/t3code/releases/tags/$REQUESTED_TAG"
+          else
+            endpoint="repos/pingdotgg/t3code/releases/latest"
+          fi
+          tag=$(gh api "$endpoint" --jq 'select(.draft == false and .prerelease == false) | .tag_name')
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          git remote add upstream https://github.com/pingdotgg/t3code.git
+          git fetch --no-tags upstream "refs/tags/$tag"
+          upstream_commit=$(git rev-parse FETCH_HEAD)
+          if git merge-base --is-ancestor "$upstream_commit" HEAD; then
+            echo "Upstream $tag is already included."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if [[ -z "$REQUESTED_TAG" && -n "$(git ls-remote --heads origin "refs/heads/codex/upstream-$tag-*")" ]]; then
+            echo "A candidate for $tag already exists. Dispatch this tag explicitly to rebuild it from current main."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          branch="codex/upstream-$tag-$GITHUB_RUN_ID"
+          git checkout -b "$branch"
+          git config user.name github-actions[bot]
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git merge --no-ff --no-commit "$upstream_commit" || true
+          test -f "$(git rev-parse --git-path MERGE_HEAD)"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "branch=$branch" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}-accounts.1" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve version-only conflicts and preserve fork identity
+        if: steps.candidate.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          # Only version/product-name conflicts are automatic. Competing
+          # dependency or source edits stop the candidate for manual review.
+          if ! node scripts/resolve-accounts-package-conflicts.ts; then
+            git diff --name-only --diff-filter=U > "$RUNNER_TEMP/accounts-upstream-conflicts.txt"
+            exit 1
+          fi
+          git diff --name-only --diff-filter=U > "$RUNNER_TEMP/accounts-upstream-conflicts.txt"
+          if [[ -s "$RUNNER_TEMP/accounts-upstream-conflicts.txt" ]]; then
+            echo "Upstream merge needs manual resolution; main has not changed." >&2
+            exit 1
+          fi
+          git commit -m "chore(accounts): merge published upstream release"
+
+      - name: Version and check the candidate
+        if: steps.candidate.outputs.changed == 'true'
+        env:
+          ACCOUNTS_VERSION: ${{ steps.candidate.outputs.version }}
+        run: |
+          set -euo pipefail
+          vp install --frozen-lockfile --filter=@t3tools/desktop... --filter=t3... --filter=@t3tools/scripts...
+          node scripts/update-release-package-versions.ts "$ACCOUNTS_VERSION"
+          vp run --concurrency-limit 2 --filter=@t3tools/contracts --filter=@t3tools/shared --filter=@t3tools/client-runtime --filter=@t3tools/web --filter=t3 --filter=@t3tools/desktop --filter=@t3tools/scripts typecheck
+          vp test run \
+            packages/contracts/src/accountLedger.test.ts \
+            packages/contracts/src/providerUsageLimits.test.ts \
+            packages/shared/src/providerAuthReturnUrl.test.ts \
+            packages/shared/src/codexAuthHandoff.test.ts \
+            packages/shared/src/cliRelease.test.ts \
+            packages/shared/src/serverSettings.test.ts \
+            apps/server/src/os-jank.test.ts \
+            packages/client-runtime/src/accounts.test.ts \
+            apps/web/src/components/usage/UsagePage.test.tsx \
+            apps/web/src/components/usage/UsagePage.refresh.test.tsx \
+            apps/web/src/components/usage/usagePagePreferences.test.ts \
+            apps/web/src/components/usage/usageShortcuts.test.ts \
+            apps/server/src/usage/ResetTimerTrigger.test.ts \
+            apps/server/src/usage/LinearAccounts.test.ts \
+            apps/server/src/usage/cliproxyResetTimer.test.ts \
+            apps/server/src/provider/Drivers/ResetTimerInference.test.ts \
+            apps/server/src/provider/Layers/codexUsageLimits.test.ts \
+            apps/server/src/provider/Layers/claudeResetCredits.test.ts \
+            apps/server/src/usage/cliproxyApi.test.ts \
+            apps/server/src/cloud/bootService.test.ts \
+            apps/desktop/scripts/electron-launcher.test.mjs \
+            apps/desktop/src/app/DesktopAppIdentity.test.ts \
+            apps/desktop/src/app/DesktopEnvironment.test.ts \
+            scripts/build-desktop-artifact.test.ts \
+            scripts/resolve-accounts-package-conflicts.test.ts
+          vp test run apps/server/src/server.test.ts -t 'routes Accounts actions|bootstrapped browser session cookie'
+          vp test run apps/server/src/serverSettings.test.ts -t 'persists account dates|persists atomic reset'
+          git add apps/server/package.json apps/desktop/package.json apps/web/package.json packages/contracts/package.json
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(accounts): align fork release version to $ACCOUNTS_VERSION"
+          fi
+
+      - name: Save conflict paths
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: accounts-upstream-conflicts
+          if-no-files-found: ignore
+          path: ${{ runner.temp }}/accounts-upstream-conflicts.txt
+
+      - name: Push checked candidate without changing main
+        if: steps.candidate.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CANDIDATE_BRANCH: ${{ steps.candidate.outputs.branch }}
+        run: |
+          set -euo pipefail
+          git -c credential.helper='!f() { printf "username=x-access-token\npassword=%s\n" "$GH_TOKEN"; }; f' push origin "HEAD:refs/heads/$CANDIDATE_BRANCH"
+          printf 'Candidate: `%s`\n\nRun the T3 Accounts Mac build on this branch before merging it into main. No pull request or release was created.\n' "$CANDIDATE_BRANCH" >> "$GITHUB_STEP_SUMMARY"

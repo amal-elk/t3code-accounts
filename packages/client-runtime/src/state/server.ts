@@ -1082,6 +1082,11 @@ export function createServerEnvironmentAtoms<R, E>(
       staleTimeMs: 60_000,
       refreshTrigger: ({ environmentId }) => usageScanSettingsAtom(environmentId),
     }),
+    linearAccounts: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:server:linear-accounts",
+      tag: WS_METHODS.serverGetLinearAccounts,
+      staleTimeMs: 60_000,
+    }),
     configProjection,
     welcome,
     consumeResetCredit: createEnvironmentRpcCommand(runtime, {
@@ -1091,6 +1096,18 @@ export function createServerEnvironmentAtoms<R, E>(
         mode: "singleFlight",
         // Both ids are free-form strings; a delimiter could collide.
         key: ({ environmentId, input }) => JSON.stringify([environmentId, input]),
+      },
+    }),
+    triggerResetTimer: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:trigger-reset-timer",
+      tag: WS_METHODS.providerTriggerResetTimer,
+      concurrency: {
+        mode: "singleFlight",
+        key: ({ environmentId, input }) =>
+          JSON.stringify([
+            environmentId,
+            "instanceId" in input ? input.instanceId : [input.sourceId, input.accountId],
+          ]),
       },
     }),
     refreshProviders: createEnvironmentRpcCommand(runtime, {

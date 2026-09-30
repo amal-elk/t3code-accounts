@@ -159,6 +159,8 @@ import * as HostResources from "./resourceTelemetry/HostResources.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as UsageService from "./usage/UsageService.ts";
+import * as ResetTimerTrigger from "./usage/ResetTimerTrigger.ts";
+import * as LinearAccounts from "./usage/LinearAccounts.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
 import { listLinkedPullRequestThreads } from "./pullRequest/linkedThreads.ts";
@@ -671,6 +673,8 @@ const makeWsRpcLayer = (
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const usage = yield* UsageService.UsageService;
+      const resetTimerTrigger = yield* ResetTimerTrigger.ResetTimerTrigger;
+      const linearAccounts = yield* LinearAccounts.LinearAccounts;
       const relayClient = yield* RelayClient.RelayClient;
       const authorizationError = (requiredScope: AuthEnvironmentScope) =>
         new EnvironmentAuthorizationError({
@@ -1856,6 +1860,7 @@ const makeWsRpcLayer = (
               otlpLogsEnabled: config.otlpLogsUrl !== undefined,
             },
             settings,
+            accountsVersion: 1 as const,
             shellResumeCompletionMarker: true,
             ...(fileManagerRevealKind === undefined
               ? {}
@@ -2453,6 +2458,10 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.providerTriggerResetTimer]: (input) =>
+          observeRpcEffect(WS_METHODS.providerTriggerResetTimer, resetTimerTrigger.trigger(input), {
+            "rpc.aggregate": "provider",
+          }),
         [WS_METHODS.providerConsumeResetCredit]: (input) =>
           observeRpcEffect(
             WS_METHODS.providerConsumeResetCredit,
@@ -2683,6 +2692,10 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.serverGetLinearAccounts]: (_input) =>
+          observeRpcEffect(WS_METHODS.serverGetLinearAccounts, linearAccounts.read, {
+            "rpc.aggregate": "server",
+          }),
         [WS_METHODS.serverGetUsageSummary]: (input) =>
           observeRpcEffect(WS_METHODS.serverGetUsageSummary, usage.readSummary(input), {
             "rpc.aggregate": "server",

@@ -67,6 +67,7 @@ import {
   resolveClaudeHomePath,
 } from "./ClaudeHome.ts";
 import { discoverClaudeSkills } from "./ClaudeSkills.ts";
+import { makeClaudeResetTimerInference } from "./ResetTimerInference.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 
 const DRIVER_KIND = ProviderDriverKind.make("claudeAgent");
@@ -175,6 +176,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const textGeneration = yield* makeClaudeTextGeneration(
         effectiveConfig,
         processEnv,
+        modelCatalog,
+      );
+      const triggerResetTimer = yield* makeClaudeResetTimerInference(
+        effectiveConfig,
+        processEnv,
+        instanceId,
         modelCatalog,
       );
 
@@ -348,6 +355,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         adapter,
         textGeneration,
         consumeResetCredit,
+        triggerResetTimer,
       } satisfies ProviderInstance;
     }),
 };

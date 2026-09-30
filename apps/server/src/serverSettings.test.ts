@@ -30,6 +30,7 @@ import { resolveProviderInstanceTerminalEnvironment } from "./terminal/Manager.t
 
 const decodeSettingsPatch = Schema.decodeUnknownEffect(ServerSettingsPatch);
 const decodeServerSettings = Schema.decodeUnknownEffect(ServerSettings);
+const decodeServerSettingsJson = Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings));
 
 const makeServerSettingsLayer = () =>
   ServerSettingsModule.layer.pipe(
@@ -315,6 +316,110 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         assert.deepStrictEqual(restored.usagePriceOverrides, {});
       }),
     ).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect("persists account dates and assignments without losing simultaneous keyed edits", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const serverConfig = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const changes = yield* serverSettings.subscribeChanges;
+        const account = {
+          service: "codex",
+          label: "work@example.test",
+          assignee: "Example user",
+          resetNotTriggered: true,
+        };
+        const event = {
+          service: "custom-service",
+          label: "Credits expire",
+          kind: "creditExpiry" as const,
+          date: "2027-03-10",
+          timeZone: "America/Los_Angeles",
+          recurrence: "none" as const,
+        };
+        const readPersisted = fileSystem
+          .readFileString(serverConfig.settingsPath)
+          .pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(ServerSettings))));
+
+        yield* Effect.all(
+          [
+            serverSettings.updateSettings({ accountLedger: { accounts: { work: account } } }),
+            serverSettings.updateSettings({ accountLedger: { events: { promo: event } } }),
+          ],
+          { concurrency: "unbounded" },
+        );
+        const change = Option.getOrUndefined(yield* Stream.runHead(changes));
+        assert.isDefined(change?.accountLedger);
+        const persisted = yield* readPersisted;
+        assert.deepStrictEqual(persisted.accountLedger, {
+          accounts: { work: account },
+          events: { promo: event },
+          notes: {},
+        });
+
+        yield* serverSettings.updateSettings({ addProjectBaseDirectory: "~/Projects" });
+        assert.deepStrictEqual((yield* readPersisted).accountLedger, persisted.accountLedger);
+
+        yield* serverSettings.updateSettings({
+          accountLedger: { accounts: { work: null }, events: { promo: null } },
+        });
+        assert.deepStrictEqual((yield* readPersisted).accountLedger, {
+          accounts: {},
+          events: {},
+          notes: {},
+        });
+      }),
+    ).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
+  it.effect(
+    "persists atomic reset-flag clearing against edits made during a provider request",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const serverConfig = yield* ServerConfig.ServerConfig;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+          const expected = { service: "codex", label: "work@example.test" };
+          const observed = { ...expected, assignee: "First user", resetNotTriggered: true };
+          yield* serverSettings.updateSettings({
+            accountLedger: { accounts: { edited: observed, deleted: observed, renamed: observed } },
+          });
+
+          // These saves land after the provider starts but before its result clears the old flag.
+          const editedAccount = {
+            ...observed,
+            assignee: "Second user",
+            resetAt: "2026-10-06T21:55:00.000Z",
+          };
+          const renamedAccount = { ...observed, label: "different@example.test" };
+          yield* serverSettings.updateSettings({
+            accountLedger: {
+              accounts: { edited: editedAccount, deleted: null, renamed: renamedAccount },
+            },
+          });
+          const cleared = yield* serverSettings.updateSettings({
+            accountLedger: {
+              clearResetNotTriggered: { edited: expected, deleted: expected, renamed: expected },
+            },
+          });
+          const expectedLedger = {
+            accounts: {
+              edited: { ...editedAccount, resetNotTriggered: false },
+              renamed: renamedAccount,
+            },
+            events: {},
+            notes: {},
+          };
+          assert.deepStrictEqual(cleared.accountLedger, expectedLedger);
+          const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+          const persisted = yield* decodeServerSettingsJson(raw);
+          assert.deepStrictEqual(persisted.accountLedger, expectedLedger);
+          assert.notInclude(raw, "clearResetNotTriggered");
+        }),
+      ).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
   it.effect("persists and broadcasts thread settlement settings", () =>

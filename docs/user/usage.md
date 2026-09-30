@@ -1,8 +1,32 @@
-# Usage and limits
+# Accounts, usage, and limits
 
 Open **Usage** from the sidebar or the command palette, or press `mod+u` on web and
 desktop when the terminal is not focused. Customize `usage.open` in
 **Settings → Keybindings**.
+
+## Keep track of accounts and dates
+
+**Usage → Accounts** on web and desktop lists each account separately, with its remaining
+allowance and reset time. Accounts sort by the next reset, and banked-credit expirations group
+by date beneath each service. An absent percentage means the provider has not reported it.
+
+Edit an account to record who is using it, or add dates and notes for any service. Credit
+expirations, billing renewals, and reminders can belong to one account or the whole workspace.
+Date-only entries retain their calendar date; entries with a time retain their selected time zone.
+Monthly and yearly entries show their next occurrence. Saved details belong to the selected
+environment and survive refreshes and app updates. Editing or deleting them does not change a
+provider's subscription or consume a credit. Connected official servers can show quota but
+need the Accounts fork server to save these details.
+
+If you have confirmed that an account reset before its timer started, record **Reset, not
+triggered**. **Trigger** sends one short test message to a supported small model on that account,
+then reads its limits again. The new timer appears only after the provider reports it. If a
+message or timer cannot be confirmed, refresh and check the account before trying again.
+Accounts without a supported authenticated route cannot trigger from this view.
+
+Linear can report workspace billing and credit alerts when connected. Alerts describe their
+state when raised; they do not replace a current balance or a complete credit-expiration list.
+Record grant expiration dates manually when a provider does not expose them.
 
 ## Understand your usage
 
@@ -129,6 +153,6 @@ requires Android 12L or later.
 On web and desktop, open Usage from the command palette. While on Usage,
 press `C`, `T`, or `L` for Cost, Tokens, or Limits while not typing in a field.
 Use `Ctrl+Shift+1/2/3/4` (`Cmd+Shift+1/2/3/4` on macOS) for the past
-24 hours, 7 days, 30 days, or 90 days. Period shortcuts do nothing on Limits.
+24 hours, 7 days, 30 days, or 90 days. Period shortcuts do nothing on Accounts or Limits.
 Press `Escape` to return to the previous page. Customize these shortcuts in
 **Settings → Keybindings**.

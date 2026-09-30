@@ -3,11 +3,7 @@ import * as NodeHttp from "node:http";
 
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import {
-  EnvironmentHttpApi,
-  ProviderDriverKind,
-  type RepositoryIdentity,
-} from "@t3tools/contracts";
+import { EnvironmentHttpApi, type RepositoryIdentity } from "@t3tools/contracts";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
@@ -163,6 +159,8 @@ import * as ResourceMonitorBinary from "./resourceTelemetry/ResourceMonitorBinar
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as UsageService from "./usage/UsageService.ts";
+import * as ResetTimerTrigger from "./usage/ResetTimerTrigger.ts";
+import * as LinearAccounts from "./usage/LinearAccounts.ts";
 import { OrchestrationLayerLive } from "./orchestration/runtimeLayer.ts";
 import {
   clearPersistedServerRuntimeState,
@@ -262,7 +260,49 @@ const HttpServerLive = Layer.unwrap(
 
 const PlatformServicesLive = NodeServices.layer;
 
+const AccountsResetObservationsLive = Layer.effectDiscard(
+  Effect.gen(function* () {
+    const providers = yield* ProviderRegistry;
+    const sources = yield* UsageLimitSources.UsageLimitSources;
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const resetTimers = yield* ResetTimerTrigger.ResetTimerTrigger;
+    const observe = Effect.gen(function* () {
+      const currentProviders = yield* providers.getProviders;
+      const currentSources = yield* sources.current;
+      yield* resetTimers.reconcile([
+        ...currentProviders
+          .filter((provider) => provider.enabled && provider.auth.status === "authenticated")
+          .map((provider) => ({
+            driver: provider.driver,
+            email: provider.auth.email,
+            usageLimits: provider.usageLimits,
+          })),
+        ...currentSources.filter((source) => !source.error).flatMap((source) => source.accounts),
+      ]);
+    });
+    // Observe even while Accounts is closed. Ledger edits are included so a
+    // mistaken confirmation cannot survive an already running weekly timer.
+    yield* Stream.merge(
+      Stream.merge(
+        providers.streamChanges.pipe(Stream.map(() => undefined)),
+        sources.streamChanges.pipe(Stream.map(() => undefined)),
+      ),
+      settings.streamChanges.pipe(
+        Stream.map((settings) => settings.accountLedger),
+        Stream.changes,
+        Stream.map(() => undefined),
+      ),
+    ).pipe(
+      Stream.runForEach(() => observe),
+      Effect.forkScoped,
+    );
+    yield* Effect.yieldNow;
+    yield* observe;
+  }),
+);
+
 const ReactorLayerLive = Layer.empty.pipe(
+  Layer.provideMerge(AccountsResetObservationsLive),
   Layer.provideMerge(OrchestrationReactorLive),
   Layer.provideMerge(ProviderRuntimeIngestionLive),
   Layer.provideMerge(ProviderCommandReactorLive),
@@ -509,6 +549,7 @@ const ProviderInstallationRefreshLive = Layer.effectDiscard(
 );
 
 const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
+  Layer.provideMerge(ResetTimerTrigger.layer),
   Layer.provideMerge(ProviderInstallationRefreshLive),
   Layer.provideMerge(ReplayMarkers.layer),
   Layer.provideMerge(ProviderAuthServiceLive),
@@ -574,6 +615,7 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
 );
 
 const RuntimeDependenciesLive = RuntimeCoreDependenciesLive.pipe(
+  Layer.provideMerge(LinearAccounts.LinearAccounts.layer),
   // Misc.
   Layer.provideMerge(BackgroundLayerLive),
   Layer.provideMerge(ResourceDiagnosticsLayerLive),

@@ -1,7 +1,7 @@
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
 import { usesChatGptSharing } from "@t3tools/shared/usageLimits";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
-import { useAtomValue } from "@effect/atom-react";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import {
   ProviderDriverKind,
   USAGE_CONTRACT_VERSION,
@@ -15,7 +15,7 @@ import {
   InfoIcon,
   SlidersHorizontalIcon,
 } from "lucide-react";
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
+import { useContext, useEffect, useEffectEvent, useMemo, useRef, useState } from "react";
 import {
   cursorKeychainAccessEnvironments,
   refreshUsageLimits,
@@ -38,6 +38,7 @@ import { isModelPickerOpen } from "../../modelPickerVisibility";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import {
   enumerateDays,
   enumerateHourStarts,
@@ -75,12 +76,13 @@ import {
 } from "../WorkspaceBreadcrumb";
 import { WorkspacePageContainer } from "../WorkspacePageContainer";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
+import { AccountsSection } from "./AccountsSection";
 import { UsageLimitsSection } from "./UsageLimits";
 import { UsagePriceOverrides } from "./UsagePriceOverrides";
 import { UsageProviderChart } from "./UsageProviderChart";
 import { sortModelsByTokens } from "./usageBreakdown";
 import {
-  METRIC_OPTIONS,
+  USAGE_VIEW_OPTIONS as METRIC_OPTIONS,
   WINDOW_OPTIONS,
   resolveUsageShortcut,
   type UsageMetric,
@@ -102,12 +104,14 @@ function isUsageWindowDays(value: number): value is UsagePagePreferences["window
 }
 
 export function UsagePage() {
+  const registry = useContext(RegistryContext);
   const [preferences, setPreferences] = useState(readUsagePagePreferences);
   useEscapeToGoBack();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const shortcutTitle = (
     option: (typeof METRIC_OPTIONS)[number] | (typeof WINDOW_OPTIONS)[number],
   ) => {
+    if (option.command === null) return option.label;
     const shortcut = shortcutLabelForCommand(keybindings, option.command, {
       context: { usagePageOpen: true },
     });
@@ -122,7 +126,8 @@ export function UsagePage() {
     ),
   }));
   const metric = preferences.metric;
-  const showingLimits = metric === "limits";
+  const showingAccounts = metric === "accounts";
+  const showingLimits = metric === "limits" || showingAccounts;
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [limitsNow, setLimitsNow] = useState(() => Date.now());
   const refreshingRef = useRef(false);
@@ -206,7 +211,7 @@ export function UsagePage() {
     });
   };
   const selectMetric = (nextMetric: UsageMetric) => {
-    if (nextMetric === "limits") setLimitsNow(Date.now());
+    if (nextMetric === "limits" || nextMetric === "accounts") setLimitsNow(Date.now());
     const nextPreferences = { metric: nextMetric, windowDays };
     setPreferences(nextPreferences);
     saveUsagePagePreferences(nextPreferences);
@@ -217,12 +222,23 @@ export function UsagePage() {
         Array.from(presentations, ([environmentId, presentation]) => {
           if (selectedEnvironmentIds !== null && !selectedEnvironmentIds.has(environmentId)) return;
           if (presentation.connection.phase === "connected" && presentation.serverConfig !== null) {
-            return refreshUsageLimits(
-              environmentId,
-              () => refreshProviders({ environmentId, input: {} }),
-              automatic,
-              afterPending,
-            );
+            return Promise.all([
+              refreshUsageLimits(
+                environmentId,
+                () => refreshProviders({ environmentId, input: {} }),
+                automatic,
+                afterPending,
+              ),
+              ...(!automatic && showingAccounts && presentation.serverConfig.accountsVersion === 1
+                ? [
+                    executeAtomQuery(
+                      registry,
+                      serverEnvironment.linearAccounts({ environmentId, input: {} }),
+                      { refresh: true, reportFailure: false },
+                    ),
+                  ]
+                : []),
+            ]);
           }
         }),
       );
@@ -241,7 +257,9 @@ export function UsagePage() {
       return;
 
     const command = resolveUsageShortcut(event, keybindings);
-    const metricOption = METRIC_OPTIONS.find((option) => option.command === command);
+    const metricOption = METRIC_OPTIONS.find(
+      (option) => option.command !== null && option.command === command,
+    );
     const periodOption = WINDOW_OPTIONS.find((option) => option.command === command);
     if (!metricOption && !periodOption) return;
 
@@ -346,7 +364,7 @@ export function UsagePage() {
             </Toggle>
           ))}
         </ToggleGroup>
-        {/* The period does not apply to Limits, so it stays in place but
+        {/* The period does not apply to Accounts or Limits, so it stays in place but
             disabled; unmounting it shifted the metric toggle ~300px. */}
         <ToggleGroup
           aria-label="Usage period"
@@ -456,6 +474,23 @@ export function UsagePage() {
                   ? `Connect an environment to see ${showingLimits ? "limits" : "usage"}.`
                   : `Select an environment to see ${showingLimits ? "limits" : "usage"}.`}
               </p>
+            ) : showingAccounts ? (
+              <AccountsSection
+                selectedEnvironmentIds={selectedEnvironmentIds}
+                now={limitsNow}
+                onRefresh={() => refreshLimits()}
+                cursorPrompt={
+                  cursorAccessEnvironments.length > 0 ? (
+                    <CursorEnableLimits
+                      environments={cursorAccessEnvironments}
+                      onEnabled={() => {
+                        void refresh();
+                        void refreshLimits(false, true);
+                      }}
+                    />
+                  ) : null
+                }
+              />
             ) : showingLimits ? (
               <UsageLimitsSection
                 selectedEnvironmentIds={selectedEnvironmentIds}

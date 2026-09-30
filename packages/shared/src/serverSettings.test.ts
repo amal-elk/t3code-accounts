@@ -24,6 +24,105 @@ import {
 const FOLDED_SERVER_SETTINGS = { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: true };
 
 describe("serverSettings helpers", () => {
+  it("merges account ledger edits per record and removes cleared optional fields", () => {
+    const account = { service: "codex", label: "work@example.test" };
+    const event = {
+      service: "codex",
+      label: "Reset credit expires",
+      account: "work",
+      kind: "bankedReset" as const,
+      date: "2026-10-22",
+      timeZone: "America/Los_Angeles",
+      recurrence: "none" as const,
+    };
+    const firstClient = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      accountLedger: {
+        accounts: { work: { ...account, assignee: "Example user", resetNotTriggered: true } },
+        events: { credit: event },
+      },
+    });
+    const secondClient = applyServerSettingsPatch(firstClient, {
+      accountLedger: {
+        accounts: { personal: { ...account, label: "personal@example.test" } },
+        notes: { setup: { service: "claude", text: "Enable cloud credits" } },
+      },
+    });
+    const unassigned = applyServerSettingsPatch(secondClient, {
+      accountLedger: { accounts: { work: account } },
+    });
+    expect(unassigned.accountLedger).toEqual({
+      accounts: { work: account, personal: { ...account, label: "personal@example.test" } },
+      events: { credit: event },
+      notes: { setup: { service: "claude", text: "Enable cloud credits" } },
+    });
+    expect(firstClient.accountLedger.accounts.work?.assignee).toBe("Example user");
+
+    const removed = applyServerSettingsPatch(unassigned, {
+      accountLedger: { events: { credit: null }, notes: { setup: null } },
+    });
+    expect(removed.accountLedger).toEqual({
+      accounts: unassigned.accountLedger.accounts,
+      events: {},
+      notes: {},
+    });
+    expect(applyServerSettingsPatch(removed, { accountLedger: {} }).accountLedger).toEqual(
+      removed.accountLedger,
+    );
+  });
+
+  it("clears a reset flag against the latest account without losing edits or resurrecting deletion", () => {
+    const expected = { service: "codex", label: "work@example.test" };
+    const observed = { ...expected, assignee: "First user", resetNotTriggered: true };
+    const original = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      accountLedger: {
+        accounts: {
+          edited: observed,
+          deleted: observed,
+          renamed: observed,
+          serviceChanged: observed,
+        },
+      },
+    });
+    const editedAccount = {
+      ...observed,
+      assignee: "Second user",
+      resetAt: "2026-10-06T21:55:00.000Z",
+    };
+    const latest = applyServerSettingsPatch(original, {
+      accountLedger: {
+        accounts: {
+          edited: editedAccount,
+          deleted: null,
+          renamed: { ...observed, label: "different@example.test" },
+          serviceChanged: { ...observed, service: "claude" },
+        },
+      },
+    });
+    const cleared = applyServerSettingsPatch(latest, {
+      accountLedger: {
+        clearResetNotTriggered: {
+          edited: expected,
+          deleted: expected,
+          renamed: expected,
+          serviceChanged: expected,
+          nonexistent: expected,
+        },
+      },
+    });
+    expect(cleared.accountLedger.accounts.edited).toEqual({
+      ...editedAccount,
+      resetNotTriggered: false,
+    });
+    expect(cleared.accountLedger.accounts.deleted).toBeUndefined();
+    expect(cleared.accountLedger.accounts.nonexistent).toBeUndefined();
+    expect(cleared.accountLedger.accounts.renamed).toEqual(latest.accountLedger.accounts.renamed);
+    expect(cleared.accountLedger.accounts.serviceChanged).toEqual(
+      latest.accountLedger.accounts.serviceChanged,
+    );
+    expect(latest.accountLedger.accounts.edited?.resetNotTriggered).toBe(true);
+    expect(cleared.accountLedger).not.toHaveProperty("clearResetNotTriggered");
+  });
+
   it("changes a cleanup rule without replacing the machine's other rules", () => {
     const enabled = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       storageCleanup: { worktreeAfterDays: 8, worktreeOnMerge: true, logsAfterDays: 30 },

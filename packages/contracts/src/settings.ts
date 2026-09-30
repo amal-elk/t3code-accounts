@@ -41,6 +41,7 @@ import {
   type ProviderDriverKind,
 } from "./providerInstance.ts";
 import { PullRequestMergeMethod } from "./pullRequest.ts";
+import { AccountLedger, AccountLedgerPatch } from "./accountLedger.ts";
 
 // ── Client Settings (local-only) ───────────────────────────────
 
@@ -1307,6 +1308,7 @@ export const ServerSettings = Schema.Struct({
   usagePriceOverrides: Schema.Record(TrimmedNonEmptyString, UsageModelPriceOverride).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  accountLedger: AccountLedger.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
 });
 export type ServerSettings = typeof ServerSettings.Type;
 
@@ -1589,6 +1591,7 @@ export const ServerSettingsPatch = Schema.Struct({
   usagePriceOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, Schema.NullOr(UsageModelPriceOverride)),
   ),
+  accountLedger: Schema.optionalKey(AccountLedgerPatch),
 });
 export type ServerSettingsPatch = typeof ServerSettingsPatch.Type;
 

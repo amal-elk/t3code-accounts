@@ -9,6 +9,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
@@ -76,7 +77,7 @@ const CreditList = Schema.Struct({
       id: Schema.String,
       status: Schema.String,
       reset_type: Schema.String,
-      expires_at: Schema.String,
+      expires_at: Schema.optional(Schema.NullOr(Schema.String)),
     }),
   ),
 });
@@ -187,13 +188,35 @@ export const makeCliproxyApi = Effect.gen(function* () {
     const response = yield* decodeCreditList(body);
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     return response.credits
-      .filter(
-        (credit) =>
-          credit.reset_type === "codex_rate_limits" &&
-          credit.status === "available" &&
-          Date.parse(credit.expires_at) > now,
-      )
-      .toSorted((a, b) => Date.parse(a.expires_at) - Date.parse(b.expires_at));
+      .flatMap((credit) => {
+        if (
+          credit.reset_type !== "codex_rate_limits" ||
+          credit.status !== "available" ||
+          !credit.id.trim()
+        ) {
+          return [];
+        }
+        const expires =
+          credit.expires_at == null ? Option.none() : DateTime.make(credit.expires_at);
+        if (
+          credit.expires_at != null &&
+          (Option.isNone(expires) || DateTime.toEpochMillis(expires.value) <= now)
+        ) {
+          return [];
+        }
+        return [
+          {
+            id: credit.id,
+            count: 1,
+            ...(Option.isSome(expires) ? { expiresAt: DateTime.formatIso(expires.value) } : {}),
+          },
+        ];
+      })
+      .toSorted(
+        (a, b) =>
+          (a.expiresAt ? Date.parse(a.expiresAt) : Number.POSITIVE_INFINITY) -
+          (b.expiresAt ? Date.parse(b.expiresAt) : Number.POSITIVE_INFINITY),
+      );
   });
 
   const readAccount = Effect.fn("CliproxyApi.readAccount")(function* (
@@ -268,10 +291,11 @@ export const makeCliproxyApi = Effect.gen(function* () {
             ? {
                 resetCredits: {
                   availableCount: available.length,
+                  credits: available,
                   ...(next
                     ? {
                         nextCreditId: next.id,
-                        nextExpiresAt: DateTime.formatIso(DateTime.makeUnsafe(next.expires_at)),
+                        ...(next.expiresAt ? { nextExpiresAt: next.expiresAt } : {}),
                       }
                     : {}),
                 },
@@ -362,5 +386,5 @@ export const makeCliproxyApi = Effect.gen(function* () {
       ),
     );
   });
-  return { readAccounts, consume };
+  return { readAccounts, consume, authFiles, apiCall, readAccount };
 });

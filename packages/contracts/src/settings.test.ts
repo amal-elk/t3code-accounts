@@ -20,6 +20,35 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
+describe("ServerSettings account ledger", () => {
+  it("loads older settings with an empty ledger and persists manual observations", () => {
+    expect(decodeServerSettings({}).accountLedger).toEqual({ accounts: {}, events: {}, notes: {} });
+    const accountLedger = {
+      accounts: {
+        work: {
+          service: "codex",
+          label: "work@example.test",
+          assignee: "Example user",
+          resetAt: "2026-10-03T17:10:00.000Z",
+          resetNotTriggered: true,
+        },
+      },
+      events: {},
+      notes: { setup: { service: "claude", text: "Enable credits after updating the username" } },
+    };
+    expect(encodeServerSettings(decodeServerSettings({ accountLedger })).accountLedger).toEqual(
+      accountLedger,
+    );
+  });
+
+  it("accepts keyed deletion patches while keeping null out of stored records", () => {
+    expect(decodeServerSettingsPatch({ accountLedger: { accounts: { work: null } } })).toEqual({
+      accountLedger: { accounts: { work: null } },
+    });
+    expect(() => decodeServerSettings({ accountLedger: { accounts: { work: null } } })).toThrow();
+  });
+});
+
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();

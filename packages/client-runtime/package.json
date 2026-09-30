@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./accounts": {
+      "types": "./src/accounts.ts",
+      "default": "./src/accounts.ts"
+    },
     "./device/stream": {
       "types": "./src/device/stream.ts",
       "default": "./src/device/stream.ts"

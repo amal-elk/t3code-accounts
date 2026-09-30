@@ -65,6 +65,10 @@ describe("claudeResetCreditsToContract", () => {
       availableCount: 2,
       nextCreditId: "grant_a",
       nextExpiresAt: "2026-10-01T00:00:00.000Z",
+      credits: [
+        { id: "grant_a", count: 2, expiresAt: "2026-10-01T00:00:00.000Z" },
+        { id: "grant_b", count: 3 },
+      ],
     });
   });
 
@@ -74,11 +78,12 @@ describe("claudeResetCreditsToContract", () => {
         { eligible: true, next_grant_id: "grant_a", grants: [grant({ usable_now: false })] },
         NOW,
       ),
-    ).toEqual({ availableCount: 0 });
+    ).toEqual({ availableCount: 0, credits: [{ id: "grant_a", count: 1 }] });
     expect(
       ClaudeResetCredits.claudeResetCreditsToContract({ eligible: true, grants: [grant({})] }, NOW),
     ).toEqual({
       availableCount: 0,
+      credits: [{ id: "grant_a", count: 1 }],
     });
     expect(
       ClaudeResetCredits.claudeResetCreditsToContract(
@@ -87,6 +92,47 @@ describe("claudeResetCreditsToContract", () => {
       ),
     ).toBeUndefined();
     expect(ClaudeResetCredits.claudeResetCreditsToContract(undefined, NOW)).toBeUndefined();
+  });
+
+  it("retains multiple grants and their counts even before they can be redeemed", () => {
+    expect(
+      ClaudeResetCredits.claudeResetCreditsToContract(
+        {
+          eligible: true,
+          next_grant_id: "later",
+          grants: [
+            grant({ id: "later", resets_left: 2, ends_at: "2026-10-29T00:00:00Z" }),
+            grant({
+              id: "first",
+              resets_left: 3,
+              usable_now: false,
+              ends_at: "2026-10-22T00:00:00Z",
+            }),
+            grant({ id: "unlimited_expiry", resets_left: 1 }),
+            grant({ id: "spent", resets_left: 0 }),
+          ],
+        },
+        NOW,
+      ),
+    ).toEqual({
+      availableCount: 3,
+      nextCreditId: "later",
+      nextExpiresAt: "2026-10-29T00:00:00.000Z",
+      credits: [
+        { id: "first", count: 3, expiresAt: "2026-10-22T00:00:00.000Z" },
+        { id: "later", count: 2, expiresAt: "2026-10-29T00:00:00.000Z" },
+        { id: "unlimited_expiry", count: 1 },
+      ],
+    });
+  });
+
+  it("distinguishes missing grant details from no remaining grants", () => {
+    expect(ClaudeResetCredits.claudeResetCreditsToContract({ eligible: true }, NOW)).toEqual({
+      availableCount: 0,
+    });
+    expect(
+      ClaudeResetCredits.claudeResetCreditsToContract({ eligible: true, grants: [] }, NOW),
+    ).toEqual({ availableCount: 0, credits: [] });
   });
 });
 
@@ -114,7 +160,11 @@ effectIt.layer(NodeServices.layer)("readClaudeResetCredits", (it) => {
         Effect.provideService(HostProcessPlatform, "linux"),
         Effect.provideService(HttpClient.HttpClient, client),
       );
-      expect(credits).toEqual({ availableCount: 1, nextCreditId: "grant_a" });
+      expect(credits).toEqual({
+        availableCount: 1,
+        nextCreditId: "grant_a",
+        credits: [{ id: "grant_a", count: 1 }],
+      });
     }),
   );
 

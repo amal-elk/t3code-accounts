@@ -37,6 +37,7 @@ export interface CodexRateLimitSnapshot {
 export interface CodexResetCreditsSummary {
   readonly availableCount: number;
   readonly credits?: ReadonlyArray<{
+    readonly id: string;
     readonly status: string;
     readonly expiresAt?: number | null;
   }> | null;
@@ -99,17 +100,26 @@ function codexRateLimitsToWindows(
 
 export function codexResetCreditsToContract(
   summary: CodexResetCreditsSummary | null | undefined,
+  nowMs: number,
 ): ServerProviderResetCredits | undefined {
   if (!summary) return undefined;
-  const expiries = (summary.credits ?? [])
-    .filter((credit) => credit.status === "available")
-    .map((credit) => credit.expiresAt)
-    .filter((value): value is number => typeof value === "number");
-  const nextExpiresAt =
-    expiries.length > 0 ? isoFromEpochSeconds(Math.min(...expiries)) : undefined;
+  const credits = (summary.credits ?? [])
+    .flatMap((credit) => {
+      if (credit.status !== "available" || !credit.id.trim()) return [];
+      const expiresAt = isoFromEpochSeconds(credit.expiresAt);
+      if (credit.expiresAt != null && (!expiresAt || Date.parse(expiresAt) <= nowMs)) return [];
+      return [{ id: credit.id, count: 1, ...(expiresAt ? { expiresAt } : {}) }];
+    })
+    .toSorted(
+      (a, b) =>
+        (a.expiresAt ? Date.parse(a.expiresAt) : Number.POSITIVE_INFINITY) -
+        (b.expiresAt ? Date.parse(b.expiresAt) : Number.POSITIVE_INFINITY),
+    );
+  const nextExpiresAt = credits[0]?.expiresAt;
   return {
     availableCount: Math.max(0, summary.availableCount),
     ...(nextExpiresAt ? { nextExpiresAt } : {}),
+    ...(summary.credits != null ? { credits } : {}),
   };
 }
 
@@ -122,7 +132,7 @@ export function codexRateLimitsToLimits(input: {
   readonly resetCredits?: CodexResetCreditsSummary | null | undefined;
   readonly checkedAt: string;
 }): ServerProviderUsageLimits {
-  const resetCredits = codexResetCreditsToContract(input.resetCredits);
+  const resetCredits = codexResetCreditsToContract(input.resetCredits, Date.parse(input.checkedAt));
   // Select the main bucket explicitly; the legacy snapshot can name another limit.
   const windows = codexRateLimitsToWindows(input.rateLimitsByLimitId?.codex ?? input.snapshot);
   return {

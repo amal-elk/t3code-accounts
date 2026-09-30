@@ -27,6 +27,15 @@ export const ServerProviderUsageWindow = Schema.Struct({
 });
 export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 
+/** One banked grant; a provider may bundle several resets into the same grant. */
+export const ServerProviderResetCredit = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  /** A grant can contain more than one reset. */
+  count: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  expiresAt: Schema.optional(IsoDateTime),
+});
+export type ServerProviderResetCredit = typeof ServerProviderResetCredit.Type;
+
 /**
  * Reset credits a provider banks on the account. Codex grants these when it
  * has rate-limited the user unfairly; redeeming one clears the current
@@ -37,6 +46,11 @@ export const ServerProviderResetCredits = Schema.Struct({
   nextExpiresAt: Schema.optional(IsoDateTime),
   /** Pins hub redemption to the displayed credit, including retries from another client. */
   nextCreditId: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Known unspent credits, including grants that cannot be redeemed yet.
+   * Omitted means details are unavailable; providers may return a capped list.
+   */
+  credits: Schema.optional(ForwardCompatibleArray(ServerProviderResetCredit)),
 });
 export type ServerProviderResetCredits = typeof ServerProviderResetCredits.Type;
 

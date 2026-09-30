@@ -111,34 +111,78 @@ function fixture(
 }
 
 describe("CLIProxyAPI built-in management API", () => {
-  it.effect(
-    "reads both accounts and their earliest unexpired credits without plugin endpoints",
-    () =>
-      Effect.gen(function* () {
-        yield* TestClock.setTime(1788710400000);
-        const test = fixture();
-        const api = yield* test.api;
-        const result = yield* api.readAccounts(config);
-        expect(result.map((account) => account.usageLimits.resetCredits)).toEqual([
-          { availableCount: 2, nextCreditId: "first", nextExpiresAt: "2099-01-01T00:00:00.000Z" },
-          { availableCount: 2, nextCreditId: "first", nextExpiresAt: "2099-01-01T00:00:00.000Z" },
-        ]);
-        expect(result[0]?.usageLimits.windows).toMatchObject([
-          { id: "secondary", usedPercent: 78, kind: "weekly" },
-        ]);
-        const calls = test.requests.filter((request) => request.body?.url);
-        expect(calls.map((request) => request.body?.auth_index).sort()).toEqual([
-          "a",
-          "a",
-          "b",
-          "b",
-        ]);
-        expect(
-          calls.find((request) => request.body?.auth_index === "b")?.body?.header?.[
-            "Chatgpt-Account-Id"
+  it.effect("reads both accounts and all unexpired credits without plugin endpoints", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1788710400000);
+      const test = fixture();
+      const api = yield* test.api;
+      const result = yield* api.readAccounts(config);
+      expect(result.map((account) => account.usageLimits.resetCredits)).toEqual([
+        {
+          availableCount: 2,
+          nextCreditId: "first",
+          nextExpiresAt: "2099-01-01T00:00:00.000Z",
+          credits: [
+            { id: "first", count: 1, expiresAt: "2099-01-01T00:00:00.000Z" },
+            { id: "later", count: 1, expiresAt: "2099-02-01T00:00:00.000Z" },
           ],
-        ).toBe("account-b");
-      }),
+        },
+        {
+          availableCount: 2,
+          nextCreditId: "first",
+          nextExpiresAt: "2099-01-01T00:00:00.000Z",
+          credits: [
+            { id: "first", count: 1, expiresAt: "2099-01-01T00:00:00.000Z" },
+            { id: "later", count: 1, expiresAt: "2099-02-01T00:00:00.000Z" },
+          ],
+        },
+      ]);
+      expect(result[0]?.usageLimits.windows).toMatchObject([
+        { id: "secondary", usedPercent: 78, kind: "weekly" },
+      ]);
+      const calls = test.requests.filter((request) => request.body?.url);
+      expect(calls.map((request) => request.body?.auth_index).sort()).toEqual(["a", "a", "b", "b"]);
+      expect(
+        calls.find((request) => request.body?.auth_index === "b")?.body?.header?.[
+          "Chatgpt-Account-Id"
+        ],
+      ).toBe("account-b");
+    }),
+  );
+
+  it.effect("keeps credits without expiry and drops malformed or unrelated credits", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(1788710400000);
+      const test = fixture({
+        accounts: [accounts[0]!],
+        upstream: (request) => ({
+          status: 200,
+          body: request.url?.endsWith("rate-limit-reset-credits")
+            ? {
+                credits: [
+                  { ...credit("no_expiry"), expires_at: null },
+                  { id: "expiry_omitted", status: "available", reset_type: "codex_rate_limits" },
+                  credit("first"),
+                  credit("invalid", "not a date"),
+                  { ...credit("other"), reset_type: "other" },
+                ],
+              }
+            : { rate_limit: null },
+        }),
+      });
+      const api = yield* test.api;
+      const result = yield* api.readAccounts(config);
+      expect(result[0]?.usageLimits.resetCredits).toEqual({
+        availableCount: 3,
+        nextCreditId: "first",
+        nextExpiresAt: "2099-01-01T00:00:00.000Z",
+        credits: [
+          { id: "first", count: 1, expiresAt: "2099-01-01T00:00:00.000Z" },
+          { id: "no_expiry", count: 1 },
+          { id: "expiry_omitted", count: 1 },
+        ],
+      });
+    }),
   );
 
   it.effect("keeps usage when the credits endpoint fails", () =>
