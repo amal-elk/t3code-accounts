@@ -12,6 +12,10 @@ by date beneath each service. An absent percentage means the provider has not re
 
 Edit an account to record who is using it, or add dates and notes for any service. Credit
 expirations, billing renewals, and reminders can belong to one account or the whole workspace.
+Drag a person's “using” pill onto another account to move the assignment. If that account is
+already assigned, the two people swap accounts. Both accounts must belong to the same connected
+environment. You can also focus a pill, press Space, use the arrow keys to move, and press Space
+again to drop; Escape cancels. This updates your account tracking, without changing provider logins.
 Add a date in its section, then choose the account, date, optional time, and label. New times use
 your local time zone; editing preserves the entry's existing time zone. Cursor refresh and billing
 dates repeat monthly. Existing recurring entries keep their schedule and show their next occurrence.

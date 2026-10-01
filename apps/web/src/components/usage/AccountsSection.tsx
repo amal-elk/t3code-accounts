@@ -1,4 +1,12 @@
 import { useAtomValue } from "@effect/atom-react";
+import {
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  PointerSensor,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
 import type { EnvironmentId, ServerProviderUsageWindow } from "@t3tools/contracts";
 import {
   accountDateIsPast,
@@ -7,6 +15,7 @@ import {
   accountResetNotTriggered,
   collectAccounts,
   collectAccountDates,
+  moveAccountAssignment,
   primaryAccountWindow,
   type AccountDate,
   type AccountRow,
@@ -28,6 +37,13 @@ import {
   type AccountsEditor,
   type LedgerSave,
 } from "./AccountsEditors";
+import {
+  AssignmentPill,
+  AssignmentPreview,
+  AssignmentTarget,
+  assignmentKey,
+  assignmentCollisionDetection,
+} from "./AccountAssignment";
 
 const SERVICE_ORDER = ["Codex", "Claude Code", "Cursor", "Linear"];
 const SERVICE_ACCENTS = new Map([
@@ -146,6 +162,15 @@ export function AccountsSection({
   const [triggering, setTriggering] = useState<string | null>(null);
   const triggeringRef = useRef(false);
   const [statuses, setStatuses] = useState<Record<string, string>>({});
+  const [draggedAccount, setDraggedAccount] = useState<AccountRow | null>(null);
+  const [movingAssignment, setMovingAssignment] = useState(false);
+  const movingAssignmentRef = useRef(false);
+  const [assignmentError, setAssignmentError] = useState<string | null>(null);
+  const [assignmentStatus, setAssignmentStatus] = useState("");
+  const assignmentSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(KeyboardSensor),
+  );
   const save: LedgerSave = async (environmentId, patch) => {
     const presentation = selected.get(environmentId);
     if (
@@ -160,6 +185,26 @@ export function AccountsSection({
       throw new Error(
         "This server did not retain the change. Update it to a matching Accounts build before saving.",
       );
+  };
+  const moveAssignment = async (source: AccountRow, target: AccountRow) => {
+    const patch = moveAccountAssignment(source, target);
+    if (!patch || movingAssignmentRef.current) return;
+    movingAssignmentRef.current = true;
+    setMovingAssignment(true);
+    setAssignmentError(null);
+    setAssignmentStatus("Moving assignment…");
+    try {
+      await save(source.environmentId, patch);
+      setAssignmentStatus("Assignment saved.");
+    } catch (cause) {
+      setAssignmentStatus("");
+      setAssignmentError(
+        cause instanceof Error ? cause.message : "Could not move this assignment.",
+      );
+    } finally {
+      movingAssignmentRef.current = false;
+      setMovingAssignment(false);
+    }
   };
   const trigger = async (account: AccountRow) => {
     if (!account.trigger || !accountResetNotTriggered(account, now) || triggeringRef.current)
@@ -272,298 +317,372 @@ export function AccountsSection({
           save dates, assignments, and use Trigger.
         </p>
       ) : null}
-      {services.map((service) => {
-        const serviceAccounts = accounts.filter((account) => account.service === service);
-        const serviceDates = dates.filter((date) => date.service === service);
-        const serviceNotes = notes.filter(
-          (entry) => accountService(entry.note.service) === service,
-        );
-        return (
-          <section
-            key={service}
-            aria-label={`${service} accounts`}
-            className={`min-w-0 ${SERVICE_ACCENTS.has(service) ? "border-s-2 border-s-(--account-accent) ps-3" : ""} ${SERVICE_ACCENTS.get(service) ?? "[--account-accent:var(--foreground)]"}`}
-          >
-            <div className="mb-1.5 flex items-center gap-2">
-              <h3 className="text-base font-semibold text-(--account-accent)">{service}</h3>
-              {serviceAccounts.length > 0 ? (
-                <span className="text-xs text-muted-foreground">
-                  {serviceAccounts.length} {serviceAccounts.length === 1 ? "account" : "accounts"}
-                </span>
-              ) : null}
-            </div>
-            {serviceAccounts.length > 0 ? (
-              <div className="min-w-0 border-t border-border/60">
-                <div
-                  aria-hidden
-                  className="hidden grid-cols-[5.5rem_minmax(0,1fr)_minmax(13rem,auto)] gap-3 py-1.5 text-xs text-muted-foreground sm:grid"
-                >
-                  <span>Remaining</span>
-                  <span>Account</span>
-                  <span className="text-right">
-                    {service === "Cursor" ? "Refresh + billing" : "Next reset"}
+      {assignmentError ? (
+        <p role="alert" className="text-xs text-destructive">
+          {assignmentError}
+        </p>
+      ) : null}
+      {assignmentStatus ? (
+        <p role="status" className={movingAssignment ? "text-xs text-muted-foreground" : "sr-only"}>
+          {assignmentStatus}
+        </p>
+      ) : null}
+      <DndContext
+        sensors={assignmentSensors}
+        collisionDetection={assignmentCollisionDetection}
+        accessibility={{
+          screenReaderInstructions: {
+            draggable:
+              "Press Space to pick up an assignment, use the arrow keys to move to another account, then press Space to drop. Press Escape to cancel.",
+          },
+          announcements: {
+            onDragStart: ({ active }) =>
+              `Picked up ${active.data.current?.assignee ?? "assignment"}.`,
+            onDragOver: ({ over }) => {
+              const target = accounts.find((account) => assignmentKey(account) === over?.id);
+              return target
+                ? `Over ${revealEmails ? target.label : `${target.service} account`}.`
+                : "Outside an account. Drop to cancel.";
+            },
+            onDragEnd: () => "Assignment drag ended.",
+            onDragCancel: () => "Assignment move canceled.",
+          },
+        }}
+        onDragStart={({ active }) => {
+          setAssignmentError(null);
+          setAssignmentStatus("");
+          setDraggedAccount(
+            accounts.find((account) => assignmentKey(account) === active.id) ?? null,
+          );
+        }}
+        onDragCancel={() => setDraggedAccount(null)}
+        onDragEnd={({ active, over }) => {
+          setDraggedAccount(null);
+          const source = accounts.find((account) => assignmentKey(account) === active.id);
+          const target = accounts.find((account) => assignmentKey(account) === over?.id);
+          if (!source || !target) return;
+          if (source.saved?.assignee !== draggedAccount?.saved?.assignee) {
+            setAssignmentError("This assignment changed while you were dragging. Try again.");
+            return;
+          }
+          void moveAssignment(source, target);
+        }}
+      >
+        {services.map((service) => {
+          const serviceAccounts = accounts.filter((account) => account.service === service);
+          const serviceDates = dates.filter((date) => date.service === service);
+          const serviceNotes = notes.filter(
+            (entry) => accountService(entry.note.service) === service,
+          );
+          return (
+            <section
+              key={service}
+              aria-label={`${service} accounts`}
+              className={`min-w-0 ${SERVICE_ACCENTS.has(service) ? "border-s-2 border-s-(--account-accent) ps-3" : ""} ${SERVICE_ACCENTS.get(service) ?? "[--account-accent:var(--foreground)]"}`}
+            >
+              <div className="mb-1.5 flex items-center gap-2">
+                <h3 className="text-base font-semibold text-(--account-accent)">{service}</h3>
+                {serviceAccounts.length > 0 ? (
+                  <span className="text-xs text-muted-foreground">
+                    {serviceAccounts.length} {serviceAccounts.length === 1 ? "account" : "accounts"}
                   </span>
-                </div>
-                {serviceAccounts.map((account) => {
-                  const main = primaryAccountWindow(account.limits);
-                  const weeklyLabel =
-                    main?.kind === "monthly"
-                      ? "monthly"
-                      : main?.kind === "session"
-                        ? "session"
-                        : "weekly";
-                  const session = account.limits?.windows.find(
-                    (window) => window.kind === "session",
-                  );
-                  const enabled =
-                    environments.find((environment) => environment.id === account.environmentId)
-                      ?.connected ?? false;
-                  const triggerEnabled =
-                    account.trigger &&
-                    selected.get(account.trigger.environmentId)?.serverConfig?.accountsVersion ===
-                      1;
-                  const notTriggered = accountResetNotTriggered(account, now);
-                  const resetDetail = notTriggered
-                    ? triggerEnabled
-                      ? "Sends “test” to a small supported model"
-                      : "Connect this account to trigger its timer"
-                    : account.resetSource === "saved"
-                      ? "Saved date"
-                      : account.limits?.checkedAt
-                        ? `Updated ${exactTimestamp(account.limits.checkedAt, timeZone)}`
-                        : "No reported reset date";
-                  const hasSecondaryDetails =
-                    (service === "Claude Code" && session && session !== main) ||
-                    selected.size > 1 ||
-                    account.limits?.unavailable;
-                  return (
-                    <div
-                      key={account.id}
-                      className="grid min-w-0 grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-0.5 border-t border-border/45 py-1.5 first:border-t-0 sm:grid-cols-[5.5rem_minmax(0,1fr)_minmax(13rem,auto)]"
-                    >
-                      <div className="row-span-2 sm:row-span-1">
-                        <Quota window={main} label={weeklyLabel} />
-                      </div>
-                      <div className="min-w-0">
-                        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
-                          <SensitiveLabel value={account.label} reveal={revealEmails} />
-                          {account.saved?.assignee ? (
-                            <span className="rounded-full bg-muted px-2 py-0.5 text-2xs text-muted-foreground">
-                              {account.saved.assignee} using
-                            </span>
-                          ) : null}
-                          <Button
-                            variant="ghost"
-                            size="icon-xs"
-                            disabled={!enabled}
-                            aria-label="Edit account details"
-                            onClick={() =>
-                              setEditor({
-                                kind: "account",
-                                environmentId: account.environmentId,
-                                account,
-                              })
-                            }
-                          >
-                            <PencilIcon />
-                          </Button>
+                ) : null}
+              </div>
+              {serviceAccounts.length > 0 ? (
+                <div className="min-w-0 border-t border-border/60">
+                  <div
+                    aria-hidden
+                    className="hidden grid-cols-[5.5rem_minmax(0,1fr)_minmax(13rem,auto)] gap-3 py-1.5 text-xs text-muted-foreground sm:grid"
+                  >
+                    <span>Remaining</span>
+                    <span>Account</span>
+                    <span className="text-right">
+                      {service === "Cursor" ? "Refresh + billing" : "Next reset"}
+                    </span>
+                  </div>
+                  {serviceAccounts.map((account) => {
+                    const main = primaryAccountWindow(account.limits);
+                    const weeklyLabel =
+                      main?.kind === "monthly"
+                        ? "monthly"
+                        : main?.kind === "session"
+                          ? "session"
+                          : "weekly";
+                    const session = account.limits?.windows.find(
+                      (window) => window.kind === "session",
+                    );
+                    const enabled =
+                      environments.find((environment) => environment.id === account.environmentId)
+                        ?.connected ?? false;
+                    const triggerEnabled =
+                      account.trigger &&
+                      selected.get(account.trigger.environmentId)?.serverConfig?.accountsVersion ===
+                        1;
+                    const notTriggered = accountResetNotTriggered(account, now);
+                    const resetDetail = notTriggered
+                      ? triggerEnabled
+                        ? "Sends “test” to a small supported model"
+                        : "Connect this account to trigger its timer"
+                      : account.resetSource === "saved"
+                        ? "Saved date"
+                        : account.limits?.checkedAt
+                          ? `Updated ${exactTimestamp(account.limits.checkedAt, timeZone)}`
+                          : "No reported reset date";
+                    const hasSecondaryDetails =
+                      (service === "Claude Code" && session && session !== main) ||
+                      selected.size > 1 ||
+                      account.limits?.unavailable;
+                    return (
+                      <AssignmentTarget
+                        key={account.id}
+                        account={account}
+                        disabled={
+                          !enabled ||
+                          movingAssignment ||
+                          Boolean(
+                            draggedAccount &&
+                            draggedAccount.environmentId !== account.environmentId,
+                          )
+                        }
+                        className="grid min-w-0 grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-0.5 border-t border-border/45 py-1.5 first:border-t-0 sm:grid-cols-[5.5rem_minmax(0,1fr)_minmax(13rem,auto)]"
+                      >
+                        <div className="row-span-2 sm:row-span-1">
+                          <Quota window={main} label={weeklyLabel} />
                         </div>
-                        {hasSecondaryDetails ? (
-                          <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
-                            {service === "Claude Code" && session && session !== main ? (
-                              <span>
-                                Session {remainingPercent(session)}%
-                                {session.resetsAt
-                                  ? ` · ${exactTimestamp(session.resetsAt, timeZone)}`
-                                  : ""}
-                              </span>
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
+                            <SensitiveLabel value={account.label} reveal={revealEmails} />
+                            {account.saved?.assignee ? (
+                              <AssignmentPill
+                                account={account}
+                                disabled={!enabled || movingAssignment}
+                              />
                             ) : null}
-                            {selected.size > 1 ? <span>{account.environmentLabel}</span> : null}
-                            {account.limits?.unavailable ? (
-                              <span>
-                                Usage unavailable
-                                {account.limits.unavailable.reason === "probeFailed"
-                                  ? " · last reported values"
-                                  : ""}
-                              </span>
-                            ) : null}
-                          </div>
-                        ) : null}
-                      </div>
-                      <div className="col-start-2 min-w-0 text-xs sm:col-start-auto sm:text-right">
-                        {notTriggered ? (
-                          <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
-                            <span
-                              aria-label="Reset, not triggered · manually confirmed"
-                              className="rounded-full border border-warning/25 bg-warning-surface px-2 py-0.5 text-warning-foreground"
-                            >
-                              Reset, not triggered
-                            </span>
                             <Button
-                              size="sm"
-                              variant="outline"
-                              disabled={!triggerEnabled || triggering !== null}
-                              onClick={() => void trigger(account)}
+                              variant="ghost"
+                              size="icon-xs"
+                              disabled={!enabled || movingAssignment}
+                              aria-label="Edit account details"
+                              onClick={() =>
+                                setEditor({
+                                  kind: "account",
+                                  environmentId: account.environmentId,
+                                  account,
+                                })
+                              }
                             >
-                              {triggering === account.id ? "Triggering…" : "Trigger"}
+                              <PencilIcon />
                             </Button>
                           </div>
-                        ) : (
-                          <Tooltip>
-                            <TooltipTrigger render={<span tabIndex={0} />}>
-                              <span className="font-medium tabular-nums">
-                                {account.resetAt ? exactTimestamp(account.resetAt, timeZone) : "—"}
+                          {hasSecondaryDetails ? (
+                            <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
+                              {service === "Claude Code" && session && session !== main ? (
+                                <span>
+                                  Session {remainingPercent(session)}%
+                                  {session.resetsAt
+                                    ? ` · ${exactTimestamp(session.resetsAt, timeZone)}`
+                                    : ""}
+                                </span>
+                              ) : null}
+                              {selected.size > 1 ? <span>{account.environmentLabel}</span> : null}
+                              {account.limits?.unavailable ? (
+                                <span>
+                                  Usage unavailable
+                                  {account.limits.unavailable.reason === "probeFailed"
+                                    ? " · last reported values"
+                                    : ""}
+                                </span>
+                              ) : null}
+                            </div>
+                          ) : null}
+                        </div>
+                        <div className="col-start-2 min-w-0 text-xs sm:col-start-auto sm:text-right">
+                          {notTriggered ? (
+                            <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
+                              <span
+                                aria-label="Reset, not triggered · manually confirmed"
+                                className="rounded-full border border-warning/25 bg-warning-surface px-2 py-0.5 text-warning-foreground"
+                              >
+                                Reset, not triggered
                               </span>
-                            </TooltipTrigger>
-                            <TooltipPopup>{resetDetail}</TooltipPopup>
-                          </Tooltip>
-                        )}
-                        {notTriggered ? (
-                          <div className="mt-0.5 text-3xs text-muted-foreground">{resetDetail}</div>
-                        ) : null}
-                        {statuses[account.id] ? (
-                          <p role="status" className="mt-1 max-w-sm text-xs text-muted-foreground">
-                            {statuses[account.id]}
-                          </p>
-                        ) : null}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            ) : service !== "Linear" ? (
-              <p className="text-xs text-muted-foreground">No accounts recorded yet.</p>
-            ) : null}
-            {service === "Cursor" ? cursorPrompt : null}
-            {service === "Linear"
-              ? [...selected].map(([environmentId, presentation]) =>
-                  presentation.connection.phase === "connected" &&
-                  presentation.serverConfig?.accountsVersion === 1 ? (
-                    <LinearAccountSummary
-                      key={environmentId}
-                      environmentId={environmentId}
-                      environmentLabel={presentation.entry.target.label}
-                      showEnvironment={selected.size > 1}
-                      timeZone={timeZone}
-                    />
-                  ) : null,
-                )
-              : null}
-            <DateGroups
-              entries={serviceDates.filter((entry) => entry.kind === "bankedReset")}
-              title="Banked reset credits expire"
-              addLabel={`Add ${service} banked reset expiration`}
-              onAdd={
-                defaultEnvironment &&
-                (service === "Codex" ||
-                  service === "Claude Code" ||
-                  serviceDates.some((entry) => entry.kind === "bankedReset"))
-                  ? () =>
-                      setEditor({
-                        kind: "event",
-                        environmentId: defaultEnvironment.id,
-                        service,
-                        eventKind: "bankedReset",
-                      })
-                  : undefined
-              }
-              revealEmails={revealEmails}
-              now={now}
-              onEdit={(entry) => {
-                if (entry.saved)
-                  setEditor({
-                    kind: "event",
-                    environmentId: entry.environmentId,
-                    id: entry.id,
-                    event: entry.saved,
-                  });
-              }}
-            />
-            <DateGroups
-              entries={serviceDates.filter((entry) => entry.kind === "cloudCredit")}
-              title="Cloud session credits expire"
-              addLabel={`Add ${service} cloud credit expiration`}
-              onAdd={
-                defaultEnvironment &&
-                (service === "Claude Code" ||
-                  serviceDates.some((entry) => entry.kind === "cloudCredit"))
-                  ? () =>
-                      setEditor({
-                        kind: "event",
-                        environmentId: defaultEnvironment.id,
-                        service,
-                        eventKind: "cloudCredit",
-                      })
-                  : undefined
-              }
-              revealEmails={revealEmails}
-              now={now}
-              onEdit={(entry) => {
-                if (entry.saved)
-                  setEditor({
-                    kind: "event",
-                    environmentId: entry.environmentId,
-                    id: entry.id,
-                    event: entry.saved,
-                  });
-              }}
-            />
-            <DateGroups
-              entries={serviceDates.filter(
-                (entry) => entry.kind !== "bankedReset" && entry.kind !== "cloudCredit",
-              )}
-              title="Dates"
-              addLabel={`Add ${service} date`}
-              onAdd={
-                defaultEnvironment
-                  ? () =>
-                      setEditor({
-                        kind: "event",
-                        environmentId: defaultEnvironment.id,
-                        service,
-                        eventKind: service === "Cursor" ? "renewal" : "creditExpiry",
-                      })
-                  : undefined
-              }
-              revealEmails={revealEmails}
-              now={now}
-              onEdit={(entry) => {
-                if (entry.saved)
-                  setEditor({
-                    kind: "event",
-                    environmentId: entry.environmentId,
-                    id: entry.id,
-                    event: entry.saved,
-                  });
-              }}
-            />
-            {serviceNotes.length > 0 ? (
-              <div className="mt-2 space-y-1">
-                {serviceNotes.map(({ id, environmentId, note }) => (
-                  <div
-                    key={`${environmentId}:${id}`}
-                    className="flex items-start gap-2 text-sm text-muted-foreground"
-                  >
-                    <p className="min-w-0 whitespace-pre-wrap break-words">{note.text}</p>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      disabled={
-                        !environments.find((environment) => environment.id === environmentId)
-                          ?.connected
-                      }
-                      aria-label="Edit note"
-                      onClick={() => setEditor({ kind: "note", environmentId, id, note })}
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                disabled={!triggerEnabled || triggering !== null}
+                                onClick={() => void trigger(account)}
+                              >
+                                {triggering === account.id ? "Triggering…" : "Trigger"}
+                              </Button>
+                            </div>
+                          ) : (
+                            <Tooltip>
+                              <TooltipTrigger render={<span tabIndex={0} />}>
+                                <span className="font-medium tabular-nums">
+                                  {account.resetAt
+                                    ? exactTimestamp(account.resetAt, timeZone)
+                                    : "—"}
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipPopup>{resetDetail}</TooltipPopup>
+                            </Tooltip>
+                          )}
+                          {notTriggered ? (
+                            <div className="mt-0.5 text-3xs text-muted-foreground">
+                              {resetDetail}
+                            </div>
+                          ) : null}
+                          {statuses[account.id] ? (
+                            <p
+                              role="status"
+                              className="mt-1 max-w-sm text-xs text-muted-foreground"
+                            >
+                              {statuses[account.id]}
+                            </p>
+                          ) : null}
+                        </div>
+                      </AssignmentTarget>
+                    );
+                  })}
+                </div>
+              ) : service !== "Linear" ? (
+                <p className="text-xs text-muted-foreground">No accounts recorded yet.</p>
+              ) : null}
+              {service === "Cursor" ? cursorPrompt : null}
+              {service === "Linear"
+                ? [...selected].map(([environmentId, presentation]) =>
+                    presentation.connection.phase === "connected" &&
+                    presentation.serverConfig?.accountsVersion === 1 ? (
+                      <LinearAccountSummary
+                        key={environmentId}
+                        environmentId={environmentId}
+                        environmentLabel={presentation.entry.target.label}
+                        showEnvironment={selected.size > 1}
+                        timeZone={timeZone}
+                      />
+                    ) : null,
+                  )
+                : null}
+              <DateGroups
+                entries={serviceDates.filter((entry) => entry.kind === "bankedReset")}
+                title="Banked reset credits expire"
+                addLabel={`Add ${service} banked reset expiration`}
+                onAdd={
+                  defaultEnvironment &&
+                  (service === "Codex" ||
+                    service === "Claude Code" ||
+                    serviceDates.some((entry) => entry.kind === "bankedReset"))
+                    ? () =>
+                        setEditor({
+                          kind: "event",
+                          environmentId: defaultEnvironment.id,
+                          service,
+                          eventKind: "bankedReset",
+                        })
+                    : undefined
+                }
+                revealEmails={revealEmails}
+                now={now}
+                onEdit={(entry) => {
+                  if (entry.saved)
+                    setEditor({
+                      kind: "event",
+                      environmentId: entry.environmentId,
+                      id: entry.id,
+                      event: entry.saved,
+                    });
+                }}
+              />
+              <DateGroups
+                entries={serviceDates.filter((entry) => entry.kind === "cloudCredit")}
+                title="Cloud session credits expire"
+                addLabel={`Add ${service} cloud credit expiration`}
+                onAdd={
+                  defaultEnvironment &&
+                  (service === "Claude Code" ||
+                    serviceDates.some((entry) => entry.kind === "cloudCredit"))
+                    ? () =>
+                        setEditor({
+                          kind: "event",
+                          environmentId: defaultEnvironment.id,
+                          service,
+                          eventKind: "cloudCredit",
+                        })
+                    : undefined
+                }
+                revealEmails={revealEmails}
+                now={now}
+                onEdit={(entry) => {
+                  if (entry.saved)
+                    setEditor({
+                      kind: "event",
+                      environmentId: entry.environmentId,
+                      id: entry.id,
+                      event: entry.saved,
+                    });
+                }}
+              />
+              <DateGroups
+                entries={serviceDates.filter(
+                  (entry) => entry.kind !== "bankedReset" && entry.kind !== "cloudCredit",
+                )}
+                title="Dates"
+                addLabel={`Add ${service} date`}
+                onAdd={
+                  defaultEnvironment
+                    ? () =>
+                        setEditor({
+                          kind: "event",
+                          environmentId: defaultEnvironment.id,
+                          service,
+                          eventKind: service === "Cursor" ? "renewal" : "creditExpiry",
+                        })
+                    : undefined
+                }
+                revealEmails={revealEmails}
+                now={now}
+                onEdit={(entry) => {
+                  if (entry.saved)
+                    setEditor({
+                      kind: "event",
+                      environmentId: entry.environmentId,
+                      id: entry.id,
+                      event: entry.saved,
+                    });
+                }}
+              />
+              {serviceNotes.length > 0 ? (
+                <div className="mt-2 space-y-1">
+                  {serviceNotes.map(({ id, environmentId, note }) => (
+                    <div
+                      key={`${environmentId}:${id}`}
+                      className="flex items-start gap-2 text-sm text-muted-foreground"
                     >
-                      <PencilIcon />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-          </section>
-        );
-      })}
+                      <p className="min-w-0 whitespace-pre-wrap break-words">{note.text}</p>
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        disabled={
+                          !environments.find((environment) => environment.id === environmentId)
+                            ?.connected
+                        }
+                        aria-label="Edit note"
+                        onClick={() => setEditor({ kind: "note", environmentId, id, note })}
+                      >
+                        <PencilIcon />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </section>
+          );
+        })}
+        <DragOverlay dropAnimation={null}>
+          {draggedAccount?.saved?.assignee ? (
+            <AssignmentPreview assignee={draggedAccount.saved.assignee} />
+          ) : null}
+        </DragOverlay>
+      </DndContext>
       {editor ? (
         <AccountsEditorDialog
           key={`${editor.kind}:${editor.kind === "account" ? (editor.account?.id ?? "new") : (editor.id ?? "new")}`}

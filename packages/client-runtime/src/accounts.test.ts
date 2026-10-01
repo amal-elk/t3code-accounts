@@ -15,8 +15,10 @@ import {
   primaryAccountWindow,
   collectAccounts,
   collectAccountDates,
+  moveAccountAssignment,
   nextAccountEventDate,
   type AccountLedger,
+  type AccountRow,
   type AccountsPresentation,
   type LedgerEvent,
 } from "./accounts.ts";
@@ -407,6 +409,84 @@ describe("Authoritative annotation responses", () => {
     ).toBe(false);
     expect(accountLedgerContainsPatch(ledger, { accounts: { one: null } })).toBe(false);
     expect(accountLedgerContainsPatch(ledger, { accounts: { absent: null } })).toBe(true);
+  });
+});
+
+describe("Account assignments", () => {
+  const source: AccountRow = {
+    id: "source",
+    environmentId: local,
+    environmentLabel: "Local",
+    service: "Codex",
+    label: "source@example.test",
+    saved: {
+      service: "Codex",
+      label: "source@example.test",
+      assignee: "Amal",
+      resetAt: "2026-10-03T19:00:00Z",
+      resetNotTriggered: true,
+    },
+    live: true,
+    limits,
+    resetAt: limits.windows[0]!.resetsAt,
+    resetSource: "live",
+    trigger: null,
+  };
+  const target: AccountRow = {
+    ...source,
+    id: "target",
+    label: "target@example.test",
+    saved: { service: "Codex", label: "target@example.test", billingDay: 19 },
+  };
+
+  it("moves a person without discarding either account's saved details", () => {
+    expect(moveAccountAssignment(source, target)).toEqual({
+      accounts: {
+        source: {
+          service: "Codex",
+          label: "source@example.test",
+          resetAt: "2026-10-03T19:00:00Z",
+          resetNotTriggered: true,
+        },
+        target: { ...target.saved, assignee: "Amal" },
+      },
+    });
+    expect(source.saved?.assignee).toBe("Amal");
+    expect(target.saved?.assignee).toBeUndefined();
+  });
+
+  it("swaps people when the target account is occupied", () => {
+    expect(
+      moveAccountAssignment(source, { ...target, saved: { ...target.saved!, assignee: "Alex" } }),
+    ).toEqual({
+      accounts: {
+        source: { ...source.saved, assignee: "Alex" },
+        target: { ...target.saved, assignee: "Amal" },
+      },
+    });
+  });
+
+  it("creates only an annotation for an account whose usage is provider-owned", () => {
+    expect(moveAccountAssignment(source, { ...target, saved: undefined })).toEqual({
+      accounts: {
+        source: {
+          service: "Codex",
+          label: "source@example.test",
+          resetAt: "2026-10-03T19:00:00Z",
+          resetNotTriggered: true,
+        },
+        target: { service: "Codex", label: "target@example.test", assignee: "Amal" },
+      },
+    });
+  });
+
+  it("ignores the same account, absent assignments, and moves across environments", () => {
+    expect(moveAccountAssignment(source, source)).toBeNull();
+    expect(moveAccountAssignment({ ...source, saved: undefined }, target)).toBeNull();
+    expect(moveAccountAssignment(source, { ...target, environmentId: remote })).toBeNull();
+    expect(
+      moveAccountAssignment(source, { ...target, saved: { ...target.saved!, assignee: "Amal" } }),
+    ).toBeNull();
   });
 });
 

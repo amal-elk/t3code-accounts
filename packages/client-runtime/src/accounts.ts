@@ -60,6 +60,33 @@ export interface AccountDate {
   readonly saved: LedgerEvent | undefined;
 }
 
+/** Move or swap two annotations in one environment-local settings write. */
+export function moveAccountAssignment(
+  source: AccountRow,
+  target: AccountRow,
+): AccountLedgerPatch | null {
+  const assignee = source.saved?.assignee;
+  if (
+    !assignee ||
+    source.id === target.id ||
+    source.environmentId !== target.environmentId ||
+    assignee === target.saved?.assignee
+  )
+    return null;
+  const sourceRecord = source.saved ?? { service: source.service, label: source.label };
+  const targetRecord = target.saved ?? { service: target.service, label: target.label };
+  const { assignee: _previousAssignee, ...sourceDetails } = sourceRecord;
+  return {
+    accounts: {
+      [source.id]: {
+        ...sourceDetails,
+        ...(targetRecord.assignee ? { assignee: targetRecord.assignee } : {}),
+      },
+      [target.id]: { ...targetRecord, assignee },
+    },
+  };
+}
+
 /** Verify authoritative save responses before reporting success to the editor. */
 export function accountLedgerContainsPatch(
   ledger: AccountLedger,
