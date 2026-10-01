@@ -1,0 +1,157 @@
+// @vitest-environment jsdom
+import { EnvironmentId } from "@t3tools/contracts";
+import type { AccountRow } from "@t3tools/client-runtime/accounts";
+import { act, useLayoutEffect } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import type { LedgerSave } from "./AccountsEditors";
+import { useAccountAssignmentMove } from "./useAccountAssignmentMove";
+
+const local = EnvironmentId.make("local");
+const source: AccountRow = {
+  id: "source",
+  environmentId: local,
+  environmentLabel: "Local",
+  service: "Codex",
+  label: "source",
+  saved: { service: "Codex", label: "source", assignees: ["Amal", "Sam"], resetNotTriggered: true },
+  live: true,
+  limits: undefined,
+  resetAt: undefined,
+  resetSource: undefined,
+  trigger: null,
+};
+const target: AccountRow = {
+  ...source,
+  id: "target",
+  label: "target",
+  saved: { service: "Codex", label: "target", assignees: ["Alex"], billingDay: 19 },
+};
+const initial = [source, target];
+let container: HTMLDivElement;
+let root: Root;
+let state: ReturnType<typeof useAccountAssignmentMove>;
+
+function Harness({
+  accounts,
+  save,
+}: {
+  readonly accounts: ReadonlyArray<AccountRow>;
+  readonly save: LedgerSave;
+}) {
+  const assignment = useAccountAssignmentMove(accounts, save);
+  useLayoutEffect(() => {
+    state = assignment;
+  }, [assignment]);
+  return (
+    <>
+      {assignment.assignmentAccounts.map((account) => (
+        <output key={account.id} data-account={account.id}>
+          {account.saved?.assignees?.join(", ")}
+        </output>
+      ))}
+      <button onClick={() => void assignment.moveAssignment(source, target, "Amal")}>
+        Move Amal
+      </button>
+      {assignment.assignmentError ? <p role="alert">{assignment.assignmentError}</p> : null}
+    </>
+  );
+}
+
+beforeEach(() => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  container = document.createElement("div");
+  document.body.append(container);
+  root = createRoot(container);
+});
+afterEach(async () => {
+  await act(() => root.unmount());
+  container.remove();
+  vi.unstubAllGlobals();
+});
+const render = (accounts: ReadonlyArray<AccountRow>, save: LedgerSave) =>
+  act(() => root.render(<Harness accounts={accounts} save={save} />));
+const drop = () => act(() => container.querySelector("button")!.click());
+const people = (id: string) => container.querySelector(`[data-account="${id}"]`)?.textContent;
+
+function deferredReply() {
+  let resolve!: () => void;
+  let reject!: (cause: Error) => void;
+  const promise = new Promise<void>((success, failure) => {
+    resolve = success;
+    reject = failure;
+  });
+  return { promise, resolve, reject };
+}
+
+describe("Assignment drop preview", () => {
+  it("moves immediately and stays at the destination until both save and config stream confirm it", async () => {
+    const reply = deferredReply();
+    const save = vi.fn<LedgerSave>(() => reply.promise);
+    await render(initial, save);
+    await drop();
+    expect(people("source")).toBe("Sam");
+    expect(people("target")).toBe("Alex, Amal");
+    expect(state.movingAssignment).toBe(true);
+    expect(state.assignmentAccounts[0]?.saved?.resetNotTriggered).toBe(true);
+    expect(state.assignmentAccounts[1]?.saved?.billingDay).toBe(19);
+
+    // A fast RPC reply must not expose the old row while its subscription catches up.
+    await act(async () => {
+      reply.resolve();
+      await reply.promise;
+    });
+    await render([...initial], save);
+    expect(people("target")).toBe("Alex, Amal");
+    expect(state.movingAssignment).toBe(true);
+
+    const synchronized = [
+      { ...source, saved: { ...source.saved!, assignees: ["Sam"] } },
+      { ...target, saved: { ...target.saved!, assignees: ["Alex", "Amal", "Taylor"] } },
+    ];
+    await render(synchronized, save);
+    expect(people("source")).toBe("Sam");
+    expect(people("target")).toBe("Alex, Amal, Taylor");
+    expect(state.movingAssignment).toBe(false);
+    expect(state.assignmentStatus).toBe("Assignment saved.");
+  });
+
+  it("keeps the preview when a subscription arrives before the save reply", async () => {
+    const reply = deferredReply();
+    const save = vi.fn<LedgerSave>(() => reply.promise);
+    await render(initial, save);
+    await drop();
+    await render(
+      [
+        { ...source, saved: { ...source.saved!, assignees: ["Sam"] } },
+        { ...target, saved: { ...target.saved!, assignees: ["Alex", "Amal"] } },
+      ],
+      save,
+    );
+    expect(state.movingAssignment).toBe(true);
+    expect(people("target")).toBe("Alex, Amal");
+    await act(async () => {
+      reply.resolve();
+      await reply.promise;
+    });
+    expect(state.movingAssignment).toBe(false);
+    expect(people("target")).toBe("Alex, Amal");
+  });
+
+  it("rolls back a failed save and blocks a second move while the first is pending", async () => {
+    const reply = deferredReply();
+    const save = vi.fn<LedgerSave>(() => reply.promise);
+    await render(initial, save);
+    await drop();
+    await drop();
+    expect(save).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      reply.reject(new Error("Could not save"));
+      await reply.promise.catch(() => {});
+    });
+    expect(people("source")).toBe("Amal, Sam");
+    expect(people("target")).toBe("Alex");
+    expect(state.movingAssignment).toBe(false);
+    expect(container.querySelector('[role="alert"]')?.textContent).toBe("Could not save");
+  });
+});

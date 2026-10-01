@@ -15,7 +15,6 @@ import {
   accountResetNotTriggered,
   collectAccounts,
   collectAccountDates,
-  moveAccountAssignment,
   primaryAccountWindow,
   type AccountDate,
   type AccountRow,
@@ -44,6 +43,7 @@ import {
   assignmentKey,
   assignmentCollisionDetection,
 } from "./AccountAssignment";
+import { useAccountAssignmentMove } from "./useAccountAssignmentMove";
 
 const SERVICE_ORDER = ["Codex", "Claude Code", "Cursor", "Linear"];
 const SERVICE_ACCENTS = new Map([
@@ -166,10 +166,6 @@ export function AccountsSection({
     readonly account: AccountRow;
     readonly assignee: string;
   } | null>(null);
-  const [movingAssignment, setMovingAssignment] = useState(false);
-  const movingAssignmentRef = useRef(false);
-  const [assignmentError, setAssignmentError] = useState<string | null>(null);
-  const [assignmentStatus, setAssignmentStatus] = useState("");
   const assignmentSensors = useSensors(useSensor(PointerSensor), useSensor(KeyboardSensor));
   const save: LedgerSave = async (environmentId, patch) => {
     const presentation = selected.get(environmentId);
@@ -186,26 +182,15 @@ export function AccountsSection({
         "This server did not retain the change. Update it to a matching Accounts build before saving.",
       );
   };
-  const moveAssignment = async (source: AccountRow, target: AccountRow, assignee: string) => {
-    const patch = moveAccountAssignment(source, target, assignee);
-    if (!patch || movingAssignmentRef.current) return;
-    movingAssignmentRef.current = true;
-    setMovingAssignment(true);
-    setAssignmentError(null);
-    setAssignmentStatus("Moving assignment…");
-    try {
-      await save(source.environmentId, patch);
-      setAssignmentStatus("Assignment saved.");
-    } catch (cause) {
-      setAssignmentStatus("");
-      setAssignmentError(
-        cause instanceof Error ? cause.message : "Could not move this assignment.",
-      );
-    } finally {
-      movingAssignmentRef.current = false;
-      setMovingAssignment(false);
-    }
-  };
+  const {
+    assignmentAccounts,
+    movingAssignment,
+    assignmentError,
+    assignmentStatus,
+    moveAssignment,
+    setAssignmentError,
+    clearAssignmentFeedback,
+  } = useAccountAssignmentMove(accounts, save);
   const trigger = async (account: AccountRow) => {
     if (!account.trigger || !accountResetNotTriggered(account, now) || triggeringRef.current)
       return;
@@ -323,7 +308,7 @@ export function AccountsSection({
         </p>
       ) : null}
       {assignmentStatus ? (
-        <p role="status" className={movingAssignment ? "text-xs text-muted-foreground" : "sr-only"}>
+        <p role="status" className="sr-only">
           {assignmentStatus}
         </p>
       ) : null}
@@ -349,8 +334,7 @@ export function AccountsSection({
           },
         }}
         onDragStart={({ active }) => {
-          setAssignmentError(null);
-          setAssignmentStatus("");
+          clearAssignmentFeedback();
           const account = accounts.find(
             (candidate) => assignmentKey(candidate) === active.data.current?.accountKey,
           );
@@ -375,7 +359,9 @@ export function AccountsSection({
         }}
       >
         {services.map((service) => {
-          const serviceAccounts = accounts.filter((account) => account.service === service);
+          const serviceAccounts = assignmentAccounts.filter(
+            (account) => account.service === service,
+          );
           const serviceDates = dates.filter((date) => date.service === service);
           const serviceNotes = notes.filter(
             (entry) => accountService(entry.note.service) === service,

@@ -22,7 +22,8 @@ export function assignmentPillKey(account: AccountRow, assignee: string) {
 export const assignmentCollisionDetection: CollisionDetection = (input) =>
   input.pointerCoordinates ? pointerWithin(input) : rectIntersection(input);
 
-const pillClass = "rounded-full bg-muted px-2 py-0.5 text-2xs text-muted-foreground";
+const pillClass =
+  "inline-flex items-center whitespace-nowrap rounded-full bg-muted px-2 py-0.5 text-2xs text-muted-foreground";
 
 export function AssignmentPill({
   account,
@@ -33,13 +34,13 @@ export function AssignmentPill({
   readonly assignee: string;
   readonly disabled: boolean;
 }) {
-  const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
+  const { active, attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: assignmentPillKey(account, assignee),
     disabled,
     data: { assignee, accountKey: assignmentKey(account) },
   });
   return (
-    <Tooltip>
+    <Tooltip disabled={active !== null || disabled}>
       <TooltipTrigger
         render={
           <button
