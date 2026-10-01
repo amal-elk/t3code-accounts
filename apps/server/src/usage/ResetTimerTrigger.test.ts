@@ -307,7 +307,7 @@ describe("ResetTimerTrigger", () => {
                 alice: {
                   service: "Codex",
                   label: "alice@example.com",
-                  assignee: "Changed during inference",
+                  assignees: ["Changed during inference"],
                   resetNotTriggered: true,
                 },
               },
@@ -319,9 +319,9 @@ describe("ResetTimerTrigger", () => {
           ),
       });
       yield* test.service.trigger(input);
-      expect((yield* settings.getSettings).accountLedger.accounts.alice?.assignee).toBe(
+      expect((yield* settings.getSettings).accountLedger.accounts.alice?.assignees).toEqual([
         "Changed during inference",
-      );
+      ]);
     }).pipe(Effect.provide(ServerSettingsService.layerTest())),
   );
 
@@ -395,7 +395,7 @@ describe("ResetTimerTrigger", () => {
               alice: {
                 service: "Codex",
                 label: "alice@example.com",
-                assignee: "Edited assignment",
+                assignees: ["Edited assignment"],
                 resetNotTriggered: true,
               },
             },
@@ -421,7 +421,7 @@ describe("ResetTimerTrigger", () => {
         ]);
         const record = (yield* test.settings.getSettings).accountLedger.accounts.alice;
         expect(record?.resetNotTriggered).toBe(false);
-        expect(record?.assignee).toBe("Edited assignment");
+        expect(record?.assignees).toEqual(["Edited assignment"]);
         yield* test.service.reconcile([
           {
             driver: "codex",

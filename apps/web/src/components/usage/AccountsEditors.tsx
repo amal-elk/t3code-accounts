@@ -275,7 +275,7 @@ function AccountForm({
 }) {
   const [service, setService] = useState(account?.service ?? "Codex");
   const [label, setLabel] = useState(account?.label ?? "");
-  const [assignee, setAssignee] = useState(account?.saved?.assignee ?? "");
+  const [assignees, setAssignees] = useState(account?.saved?.assignees?.join(", ") ?? "");
   const [zone, setZone] = useState(new Intl.DateTimeFormat().resolvedOptions().timeZone);
   const [reset, setReset] = useState(() => {
     if (!account?.saved?.resetAt) return "";
@@ -308,12 +308,20 @@ function AccountForm({
                 accountDateTimestamp(reset.slice(0, 10), reset.slice(11, 16), zone),
               ).toISOString()
             : undefined;
+          const people = [
+            ...new Set(
+              assignees
+                .split(",")
+                .map((name) => name.trim())
+                .filter(Boolean),
+            ),
+          ];
           void onSave({
             accounts: {
               [account?.id ?? randomUUID()]: {
                 service: accountService(service),
                 label: label.trim(),
-                ...(assignee.trim() ? { assignee: assignee.trim() } : {}),
+                ...(people.length > 0 ? { assignees: people } : {}),
                 ...(resetAt ? { resetAt } : {}),
                 ...(resetNotTriggered ? { resetNotTriggered: true } : {}),
                 ...(account?.saved?.billingDay ? { billingDay: account.saved.billingDay } : {}),
@@ -352,12 +360,13 @@ function AccountForm({
         {(id) => (
           <Input
             id={id}
-            value={assignee}
-            onChange={(event) => setAssignee(event.target.value)}
-            placeholder="Alex"
+            value={assignees}
+            onChange={(event) => setAssignees(event.target.value)}
+            placeholder="Amal, Alex"
           />
         )}
       </Field>
+      <p className="-mt-2 text-xs text-muted-foreground">Separate names with a comma.</p>
       <Field label="Saved reset date and time (optional)">
         {(id) => (
           <Input

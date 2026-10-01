@@ -5343,7 +5343,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.equal(response.environment.environmentId, testEnvironmentDescriptor.environmentId);
       assert.equal(response.auth.policy, "desktop-managed-local");
-      assert.equal(response.accountsVersion, 1);
+      assert.equal(response.accountsVersion, 2);
       assert.equal(response.shellResumeCompletionMarker, true);
       assert.isUndefined(response.shellRevealInFileManager);
       assert.isUndefined(response.shellRevealInFileManagerKind);

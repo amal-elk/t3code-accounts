@@ -150,7 +150,7 @@ export function AccountsSection({
     label: presentation.entry.target.label,
     connected:
       presentation.connection.phase === "connected" &&
-      presentation.serverConfig?.accountsVersion === 1,
+      presentation.serverConfig?.accountsVersion === 2,
   }));
   const defaultEnvironment = environments.find((environment) => environment.connected);
   const update = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
@@ -162,7 +162,10 @@ export function AccountsSection({
   const [triggering, setTriggering] = useState<string | null>(null);
   const triggeringRef = useRef(false);
   const [statuses, setStatuses] = useState<Record<string, string>>({});
-  const [draggedAccount, setDraggedAccount] = useState<AccountRow | null>(null);
+  const [draggedAssignment, setDraggedAssignment] = useState<{
+    readonly account: AccountRow;
+    readonly assignee: string;
+  } | null>(null);
   const [movingAssignment, setMovingAssignment] = useState(false);
   const movingAssignmentRef = useRef(false);
   const [assignmentError, setAssignmentError] = useState<string | null>(null);
@@ -172,7 +175,7 @@ export function AccountsSection({
     const presentation = selected.get(environmentId);
     if (
       presentation?.connection.phase !== "connected" ||
-      presentation.serverConfig?.accountsVersion !== 1
+      presentation.serverConfig?.accountsVersion !== 2
     )
       throw new Error("Connect this environment to the Accounts fork before saving details.");
     const result = await update({ environmentId, input: { patch: { accountLedger: patch } } });
@@ -183,8 +186,8 @@ export function AccountsSection({
         "This server did not retain the change. Update it to a matching Accounts build before saving.",
       );
   };
-  const moveAssignment = async (source: AccountRow, target: AccountRow) => {
-    const patch = moveAccountAssignment(source, target);
+  const moveAssignment = async (source: AccountRow, target: AccountRow, assignee: string) => {
+    const patch = moveAccountAssignment(source, target, assignee);
     if (!patch || movingAssignmentRef.current) return;
     movingAssignmentRef.current = true;
     setMovingAssignment(true);
@@ -268,7 +271,7 @@ export function AccountsSection({
   ];
   const unsupported = [...selected].some(
     ([, presentation]) =>
-      presentation.serverConfig && presentation.serverConfig.accountsVersion !== 1,
+      presentation.serverConfig && presentation.serverConfig.accountsVersion !== 2,
   );
   return (
     <div className="min-w-0 space-y-5 pb-4">
@@ -348,21 +351,27 @@ export function AccountsSection({
         onDragStart={({ active }) => {
           setAssignmentError(null);
           setAssignmentStatus("");
-          setDraggedAccount(
-            accounts.find((account) => assignmentKey(account) === active.id) ?? null,
+          const account = accounts.find(
+            (candidate) => assignmentKey(candidate) === active.data.current?.accountKey,
+          );
+          const assignee = active.data.current?.assignee;
+          setDraggedAssignment(
+            account && typeof assignee === "string" ? { account, assignee } : null,
           );
         }}
-        onDragCancel={() => setDraggedAccount(null)}
+        onDragCancel={() => setDraggedAssignment(null)}
         onDragEnd={({ active, over }) => {
-          setDraggedAccount(null);
-          const source = accounts.find((account) => assignmentKey(account) === active.id);
+          setDraggedAssignment(null);
+          const source = accounts.find(
+            (account) => assignmentKey(account) === active.data.current?.accountKey,
+          );
           const target = accounts.find((account) => assignmentKey(account) === over?.id);
-          if (!source || !target) return;
-          if (source.saved?.assignee !== draggedAccount?.saved?.assignee) {
+          if (!source || !target || !draggedAssignment) return;
+          if (!source.saved?.assignees?.includes(draggedAssignment.assignee)) {
             setAssignmentError("This assignment changed while you were dragging. Try again.");
             return;
           }
-          void moveAssignment(source, target);
+          void moveAssignment(source, target, draggedAssignment.assignee);
         }}
       >
         {services.map((service) => {
@@ -414,7 +423,7 @@ export function AccountsSection({
                     const triggerEnabled =
                       account.trigger &&
                       selected.get(account.trigger.environmentId)?.serverConfig?.accountsVersion ===
-                        1;
+                        2;
                     const notTriggered = accountResetNotTriggered(account, now);
                     const resetDetail = notTriggered
                       ? triggerEnabled
@@ -437,8 +446,8 @@ export function AccountsSection({
                           !enabled ||
                           movingAssignment ||
                           Boolean(
-                            draggedAccount &&
-                            draggedAccount.environmentId !== account.environmentId,
+                            draggedAssignment &&
+                            draggedAssignment.account.environmentId !== account.environmentId,
                           )
                         }
                         className="grid min-w-0 grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-0.5 border-t border-border/45 py-1.5 first:border-t-0 sm:grid-cols-[5.5rem_minmax(0,1fr)_minmax(13rem,auto)]"
@@ -449,12 +458,14 @@ export function AccountsSection({
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
                             <SensitiveLabel value={account.label} reveal={revealEmails} />
-                            {account.saved?.assignee ? (
+                            {account.saved?.assignees?.map((assignee) => (
                               <AssignmentPill
+                                key={assignee}
                                 account={account}
+                                assignee={assignee}
                                 disabled={!enabled || movingAssignment}
                               />
-                            ) : null}
+                            ))}
                             <Button
                               variant="ghost"
                               size="icon-xs"
@@ -548,7 +559,7 @@ export function AccountsSection({
               {service === "Linear"
                 ? [...selected].map(([environmentId, presentation]) =>
                     presentation.connection.phase === "connected" &&
-                    presentation.serverConfig?.accountsVersion === 1 ? (
+                    presentation.serverConfig?.accountsVersion === 2 ? (
                       <LinearAccountSummary
                         key={environmentId}
                         environmentId={environmentId}
@@ -675,9 +686,7 @@ export function AccountsSection({
           );
         })}
         <DragOverlay dropAnimation={null}>
-          {draggedAccount?.saved?.assignee ? (
-            <AssignmentPreview assignee={draggedAccount.saved.assignee} />
-          ) : null}
+          {draggedAssignment ? <AssignmentPreview assignee={draggedAssignment.assignee} /> : null}
         </DragOverlay>
       </DndContext>
       {editor ? (

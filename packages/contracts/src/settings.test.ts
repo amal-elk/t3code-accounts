@@ -21,6 +21,47 @@ const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
 describe("ServerSettings account ledger", () => {
+  it("migrates saved single-person assignments and writes only the people list", () => {
+    const legacy = {
+      service: "Codex",
+      label: "work@example.test",
+      assignee: "Amal",
+      resetAt: "2026-10-03T17:10:00.000Z",
+      resetNotTriggered: true,
+    };
+    const { assignee: _oldPerson, ...details } = legacy;
+    const settings = decodeServerSettings({ accountLedger: { accounts: { work: legacy } } });
+    expect(settings.accountLedger.accounts.work).toEqual({ ...details, assignees: ["Amal"] });
+    expect(encodeServerSettings(settings).accountLedger?.accounts?.work).toEqual({
+      ...details,
+      assignees: ["Amal"],
+    });
+    // A later explicit removal must never resurrect an old saved assignment.
+    expect(
+      decodeServerSettings({
+        accountLedger: { accounts: { work: { ...legacy, assignees: [] } } },
+      }).accountLedger.accounts.work?.assignees,
+    ).toEqual([]);
+  });
+
+  it("round-trips several people and rejects duplicate names", () => {
+    const accountLedger = {
+      accounts: { work: { service: "Codex", label: "work", assignees: ["Amal", "Alex"] } },
+      events: {},
+      notes: {},
+    };
+    expect(encodeServerSettings(decodeServerSettings({ accountLedger })).accountLedger).toEqual(
+      accountLedger,
+    );
+    expect(() =>
+      decodeServerSettingsPatch({
+        accountLedger: {
+          accounts: { work: { service: "Codex", label: "work", assignees: ["Amal", "Amal"] } },
+        },
+      }),
+    ).toThrow();
+  });
+
   it("loads older settings with an empty ledger and persists manual observations", () => {
     expect(decodeServerSettings({}).accountLedger).toEqual({ accounts: {}, events: {}, notes: {} });
     const accountLedger = {
@@ -28,7 +69,7 @@ describe("ServerSettings account ledger", () => {
         work: {
           service: "codex",
           label: "work@example.test",
-          assignee: "Example user",
+          assignees: ["Example user"],
           resetAt: "2026-10-03T17:10:00.000Z",
           resetNotTriggered: true,
         },

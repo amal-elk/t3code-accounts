@@ -150,7 +150,7 @@ describe("Accounts view selection", () => {
               person: {
                 service: "codex",
                 label: "PERSON@example.test",
-                assignee: "Alex",
+                assignees: ["Alex"],
                 resetAt: "2026-10-01T00:00:00Z",
               },
             },
@@ -165,7 +165,7 @@ describe("Accounts view selection", () => {
       label: "person@example.test",
       resetAt: "2026-10-03T19:00:00Z",
       resetSource: "live",
-      saved: { assignee: "Alex" },
+      saved: { assignees: ["Alex"] },
     });
     expect(rows[1]?.label).toBe("later@example.test");
   });
@@ -386,7 +386,7 @@ describe("Authoritative annotation responses", () => {
   it("accepts the named record without requiring other clients' records to match", () => {
     const ledger: AccountLedger = {
       accounts: {
-        one: { label: "One", service: "Codex", assignee: "Alex" },
+        one: { label: "One", service: "Codex", assignees: ["Alex"] },
         other: { label: "Other", service: "Cursor" },
       },
       events: {},
@@ -394,12 +394,12 @@ describe("Authoritative annotation responses", () => {
     };
     expect(
       accountLedgerContainsPatch(ledger, {
-        accounts: { one: { service: "Codex", label: "One", assignee: "Alex" } },
+        accounts: { one: { service: "Codex", label: "One", assignees: ["Alex"] } },
       }),
     ).toBe(true);
     expect(
       accountLedgerContainsPatch(ledger, {
-        accounts: { one: { service: "Codex", label: "One", assignee: "Amal" } },
+        accounts: { one: { service: "Codex", label: "One", assignees: ["Amal"] } },
       }),
     ).toBe(false);
     expect(
@@ -422,7 +422,7 @@ describe("Account assignments", () => {
     saved: {
       service: "Codex",
       label: "source@example.test",
-      assignee: "Amal",
+      assignees: ["Amal"],
       resetAt: "2026-10-03T19:00:00Z",
       resetNotTriggered: true,
     },
@@ -440,7 +440,7 @@ describe("Account assignments", () => {
   };
 
   it("moves a person without discarding either account's saved details", () => {
-    expect(moveAccountAssignment(source, target)).toEqual({
+    expect(moveAccountAssignment(source, target, "Amal")).toEqual({
       accounts: {
         source: {
           service: "Codex",
@@ -448,26 +448,53 @@ describe("Account assignments", () => {
           resetAt: "2026-10-03T19:00:00Z",
           resetNotTriggered: true,
         },
-        target: { ...target.saved, assignee: "Amal" },
+        target: { ...target.saved, assignees: ["Amal"] },
       },
     });
-    expect(source.saved?.assignee).toBe("Amal");
-    expect(target.saved?.assignee).toBeUndefined();
+    expect(source.saved?.assignees).toEqual(["Amal"]);
+    expect(target.saved?.assignees).toBeUndefined();
   });
 
-  it("swaps people when the target account is occupied", () => {
+  it("adds a person alongside the people already using the target account", () => {
     expect(
-      moveAccountAssignment(source, { ...target, saved: { ...target.saved!, assignee: "Alex" } }),
+      moveAccountAssignment(
+        source,
+        { ...target, saved: { ...target.saved!, assignees: ["Alex"] } },
+        "Amal",
+      ),
     ).toEqual({
       accounts: {
-        source: { ...source.saved, assignee: "Alex" },
-        target: { ...target.saved, assignee: "Amal" },
+        source: {
+          service: "Codex",
+          label: "source@example.test",
+          resetAt: "2026-10-03T19:00:00Z",
+          resetNotTriggered: true,
+        },
+        target: { ...target.saved, assignees: ["Alex", "Amal"] },
       },
+    });
+  });
+
+  it("moves only the dragged person out of a shared account", () => {
+    const shared = { ...source, saved: { ...source.saved!, assignees: ["Alex", "Amal"] } };
+    expect(moveAccountAssignment(shared, target, "Amal")?.accounts).toEqual({
+      source: { ...shared.saved, assignees: ["Alex"] },
+      target: { ...target.saved, assignees: ["Amal"] },
+    });
+    expect(shared.saved.assignees).toEqual(["Alex", "Amal"]);
+  });
+
+  it("keeps an existing destination assignment once when moving a duplicate", () => {
+    const shared = { ...source, saved: { ...source.saved!, assignees: ["Alex", "Amal"] } };
+    const occupied = { ...target, saved: { ...target.saved!, assignees: ["Amal"] } };
+    expect(moveAccountAssignment(shared, occupied, "Amal")?.accounts).toEqual({
+      source: { ...shared.saved, assignees: ["Alex"] },
+      target: occupied.saved,
     });
   });
 
   it("creates only an annotation for an account whose usage is provider-owned", () => {
-    expect(moveAccountAssignment(source, { ...target, saved: undefined })).toEqual({
+    expect(moveAccountAssignment(source, { ...target, saved: undefined }, "Amal")).toEqual({
       accounts: {
         source: {
           service: "Codex",
@@ -475,18 +502,16 @@ describe("Account assignments", () => {
           resetAt: "2026-10-03T19:00:00Z",
           resetNotTriggered: true,
         },
-        target: { service: "Codex", label: "target@example.test", assignee: "Amal" },
+        target: { service: "Codex", label: "target@example.test", assignees: ["Amal"] },
       },
     });
   });
 
   it("ignores the same account, absent assignments, and moves across environments", () => {
-    expect(moveAccountAssignment(source, source)).toBeNull();
-    expect(moveAccountAssignment({ ...source, saved: undefined }, target)).toBeNull();
-    expect(moveAccountAssignment(source, { ...target, environmentId: remote })).toBeNull();
-    expect(
-      moveAccountAssignment(source, { ...target, saved: { ...target.saved!, assignee: "Amal" } }),
-    ).toBeNull();
+    expect(moveAccountAssignment(source, source, "Amal")).toBeNull();
+    expect(moveAccountAssignment({ ...source, saved: undefined }, target, "Amal")).toBeNull();
+    expect(moveAccountAssignment(source, { ...target, environmentId: remote }, "Amal")).toBeNull();
+    expect(moveAccountAssignment(source, target, "Alex")).toBeNull();
   });
 });
 
@@ -608,14 +633,14 @@ describe("Stable account annotations", () => {
         [
           local,
           presentation([native], {
-            accounts: { [first.id]: { service: "Codex", label: "Personal", assignee: "Alex" } },
+            accounts: { [first.id]: { service: "Codex", label: "Personal", assignees: ["Alex"] } },
           }),
         ],
       ]),
       now,
     );
     expect(saved).toHaveLength(1);
-    expect(saved[0]?.saved?.assignee).toBe("Alex");
+    expect(saved[0]?.saved?.assignees).toEqual(["Alex"]);
     expect(saved[0]?.live).toBe(true);
   });
   it("resolves account-key event scope before comparing reported and saved grants", () => {

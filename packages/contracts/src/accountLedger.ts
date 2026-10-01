@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 /** A local calendar date; date-only credit deadlines must never shift with UTC. */
@@ -41,15 +42,35 @@ const AccountResetAt = Schema.String.check(
 const AccountLabel = TrimmedNonEmptyString.check(Schema.isMaxLength(500));
 
 /** Keys in `AccountLedger.accounts` own identity; provider usage stays outside this record. */
-export const AccountRecord = Schema.Struct({
+const AccountRecordFields = {
   service: AccountLabel,
   label: AccountLabel,
-  assignee: Schema.optionalKey(AccountLabel),
+  assignees: Schema.optionalKey(
+    Schema.Array(AccountLabel).check(
+      Schema.makeFilter((people) => new Set(people).size === people.length || "Duplicate person."),
+    ),
+  ),
   resetAt: Schema.optionalKey(AccountResetAt),
   /** An explicit observation, never inferred from an account reporting 100% remaining. */
   resetNotTriggered: Schema.optionalKey(Schema.Boolean),
   billingDay: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 31 }))),
-});
+};
+// Existing saved single-person assignments migrate on read; every write uses the list.
+export const AccountRecord = Schema.Struct({
+  ...AccountRecordFields,
+  assignee: Schema.optionalKey(AccountLabel),
+}).pipe(
+  Schema.decodeTo(
+    Schema.Struct(AccountRecordFields),
+    SchemaTransformation.transform({
+      decode: ({ assignee, ...record }) => ({
+        ...record,
+        ...(record.assignees === undefined && assignee ? { assignees: [assignee] } : {}),
+      }),
+      encode: (record) => record,
+    }),
+  ),
+);
 export type AccountRecord = typeof AccountRecord.Type;
 
 export const AccountEventKind = Schema.Literals([

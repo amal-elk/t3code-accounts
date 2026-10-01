@@ -318,6 +318,42 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     ).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("migrates saved account assignments before persisting a move to a shared row", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      yield* fileSystem.writeFileString(
+        serverConfig.settingsPath,
+        '{"accountLedger":{"accounts":{"work":{"service":"Codex","label":"work","assignee":"Amal","resetNotTriggered":true},"personal":{"service":"Codex","label":"personal","assignee":"Alex","billingDay":19}}}}',
+      );
+      const before = yield* serverSettings.getSettings;
+      assert.deepStrictEqual(before.accountLedger.accounts.work?.assignees, ["Amal"]);
+      assert.deepStrictEqual(before.accountLedger.accounts.personal?.assignees, ["Alex"]);
+      const { assignees: _moved, ...work } = before.accountLedger.accounts.work!;
+      yield* serverSettings.updateSettings({
+        accountLedger: {
+          accounts: {
+            work,
+            personal: { ...before.accountLedger.accounts.personal!, assignees: ["Alex", "Amal"] },
+          },
+        },
+      });
+      const raw = yield* fileSystem.readFileString(serverConfig.settingsPath);
+      assert.notInclude(raw, '"assignee":');
+      const persisted = yield* decodeServerSettingsJson(raw);
+      assert.deepStrictEqual(persisted.accountLedger.accounts, {
+        work: { service: "Codex", label: "work", resetNotTriggered: true },
+        personal: {
+          service: "Codex",
+          label: "personal",
+          billingDay: 19,
+          assignees: ["Alex", "Amal"],
+        },
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("persists account dates and assignments without losing simultaneous keyed edits", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -328,7 +364,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         const account = {
           service: "codex",
           label: "work@example.test",
-          assignee: "Example user",
+          assignees: ["Amal", "Alex"],
           resetNotTriggered: true,
         };
         const event = {
@@ -383,7 +419,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           const fileSystem = yield* FileSystem.FileSystem;
           const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
           const expected = { service: "codex", label: "work@example.test" };
-          const observed = { ...expected, assignee: "First user", resetNotTriggered: true };
+          const observed = { ...expected, assignees: ["First user"], resetNotTriggered: true };
           yield* serverSettings.updateSettings({
             accountLedger: { accounts: { edited: observed, deleted: observed, renamed: observed } },
           });
@@ -391,7 +427,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
           // These saves land after the provider starts but before its result clears the old flag.
           const editedAccount = {
             ...observed,
-            assignee: "Second user",
+            assignees: ["Second user"],
             resetAt: "2026-10-06T21:55:00.000Z",
           };
           const renamedAccount = { ...observed, label: "different@example.test" };

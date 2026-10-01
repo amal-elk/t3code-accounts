@@ -60,29 +60,32 @@ export interface AccountDate {
   readonly saved: LedgerEvent | undefined;
 }
 
-/** Move or swap two annotations in one environment-local settings write. */
+/** Move one person, preserving the other people and details on both account rows. */
 export function moveAccountAssignment(
   source: AccountRow,
   target: AccountRow,
+  assignee: string,
 ): AccountLedgerPatch | null {
-  const assignee = source.saved?.assignee;
   if (
-    !assignee ||
+    !source.saved?.assignees?.includes(assignee) ||
     source.id === target.id ||
-    source.environmentId !== target.environmentId ||
-    assignee === target.saved?.assignee
+    source.environmentId !== target.environmentId
   )
     return null;
   const sourceRecord = source.saved ?? { service: source.service, label: source.label };
   const targetRecord = target.saved ?? { service: target.service, label: target.label };
-  const { assignee: _previousAssignee, ...sourceDetails } = sourceRecord;
+  const { assignees: previousAssignees, ...sourceDetails } = sourceRecord;
+  const remaining = previousAssignees?.filter((person) => person !== assignee) ?? [];
   return {
     accounts: {
       [source.id]: {
         ...sourceDetails,
-        ...(targetRecord.assignee ? { assignee: targetRecord.assignee } : {}),
+        ...(remaining.length > 0 ? { assignees: remaining } : {}),
       },
-      [target.id]: { ...targetRecord, assignee },
+      [target.id]: {
+        ...targetRecord,
+        assignees: [...new Set([...(targetRecord.assignees ?? []), assignee])],
+      },
     },
   };
 }

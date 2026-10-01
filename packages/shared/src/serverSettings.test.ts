@@ -37,7 +37,7 @@ describe("serverSettings helpers", () => {
     };
     const firstClient = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       accountLedger: {
-        accounts: { work: { ...account, assignee: "Example user", resetNotTriggered: true } },
+        accounts: { work: { ...account, assignees: ["Example user"], resetNotTriggered: true } },
         events: { credit: event },
       },
     });
@@ -55,7 +55,7 @@ describe("serverSettings helpers", () => {
       events: { credit: event },
       notes: { setup: { service: "claude", text: "Enable cloud credits" } },
     });
-    expect(firstClient.accountLedger.accounts.work?.assignee).toBe("Example user");
+    expect(firstClient.accountLedger.accounts.work?.assignees).toEqual(["Example user"]);
 
     const removed = applyServerSettingsPatch(unassigned, {
       accountLedger: { events: { credit: null }, notes: { setup: null } },
@@ -72,7 +72,7 @@ describe("serverSettings helpers", () => {
 
   it("clears a reset flag against the latest account without losing edits or resurrecting deletion", () => {
     const expected = { service: "codex", label: "work@example.test" };
-    const observed = { ...expected, assignee: "First user", resetNotTriggered: true };
+    const observed = { ...expected, assignees: ["First user"], resetNotTriggered: true };
     const original = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       accountLedger: {
         accounts: {
@@ -85,7 +85,7 @@ describe("serverSettings helpers", () => {
     });
     const editedAccount = {
       ...observed,
-      assignee: "Second user",
+      assignees: ["Second user"],
       resetAt: "2026-10-06T21:55:00.000Z",
     };
     const latest = applyServerSettingsPatch(original, {
