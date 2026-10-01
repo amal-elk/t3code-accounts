@@ -466,21 +466,6 @@ export function AccountsSection({
                                 disabled={!enabled || movingAssignment}
                               />
                             ))}
-                            <Button
-                              variant="ghost"
-                              size="icon-xs"
-                              disabled={!enabled || movingAssignment}
-                              aria-label="Edit account details"
-                              onClick={() =>
-                                setEditor({
-                                  kind: "account",
-                                  environmentId: account.environmentId,
-                                  account,
-                                })
-                              }
-                            >
-                              <PencilIcon />
-                            </Button>
                           </div>
                           {hasSecondaryDetails ? (
                             <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
@@ -505,35 +490,52 @@ export function AccountsSection({
                           ) : null}
                         </div>
                         <div className="col-start-2 min-w-0 text-xs sm:col-start-auto sm:text-right">
-                          {notTriggered ? (
-                            <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
-                              <span
-                                aria-label="Reset, not triggered · manually confirmed"
-                                className="rounded-full border border-warning/25 bg-warning-surface px-2 py-0.5 text-warning-foreground"
-                              >
-                                Reset, not triggered
-                              </span>
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                disabled={!triggerEnabled || triggering !== null}
-                                onClick={() => void trigger(account)}
-                              >
-                                {triggering === account.id ? "Triggering…" : "Trigger"}
-                              </Button>
-                            </div>
-                          ) : (
-                            <Tooltip>
-                              <TooltipTrigger render={<span tabIndex={0} />}>
-                                <span className="font-medium tabular-nums">
-                                  {account.resetAt
-                                    ? exactTimestamp(account.resetAt, timeZone)
-                                    : "—"}
+                          <div className="flex items-center gap-1.5 sm:justify-end">
+                            {notTriggered ? (
+                              <div className="flex flex-wrap items-center gap-1.5 sm:justify-end">
+                                <span
+                                  aria-label="Reset, not triggered · manually confirmed"
+                                  className="rounded-full border border-warning/25 bg-warning-surface px-2 py-0.5 text-warning-foreground"
+                                >
+                                  Reset, not triggered
                                 </span>
-                              </TooltipTrigger>
-                              <TooltipPopup>{resetDetail}</TooltipPopup>
-                            </Tooltip>
-                          )}
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  disabled={!triggerEnabled || triggering !== null}
+                                  onClick={() => void trigger(account)}
+                                >
+                                  {triggering === account.id ? "Triggering…" : "Trigger"}
+                                </Button>
+                              </div>
+                            ) : (
+                              <Tooltip>
+                                <TooltipTrigger render={<span tabIndex={0} />}>
+                                  <span className="font-medium tabular-nums">
+                                    {account.resetAt
+                                      ? exactTimestamp(account.resetAt, timeZone)
+                                      : "—"}
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipPopup>{resetDetail}</TooltipPopup>
+                              </Tooltip>
+                            )}
+                            <Button
+                              variant="ghost"
+                              size="icon-xs"
+                              disabled={!enabled || movingAssignment}
+                              aria-label="Edit account details"
+                              onClick={() =>
+                                setEditor({
+                                  kind: "account",
+                                  environmentId: account.environmentId,
+                                  account,
+                                })
+                              }
+                            >
+                              <PencilIcon />
+                            </Button>
+                          </div>
                           {notTriggered ? (
                             <div className="mt-0.5 text-3xs text-muted-foreground">
                               {resetDetail}
