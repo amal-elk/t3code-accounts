@@ -52,7 +52,10 @@ export function AssignmentPill({
             aria-label={`Move ${assignee} using`}
             className={cn(
               pillClass,
-              "touch-none cursor-grab select-none focus-visible:outline-2 focus-visible:outline-ring active:cursor-grabbing disabled:cursor-default",
+              "touch-none cursor-grab select-none active:cursor-grabbing disabled:cursor-default",
+              active !== null
+                ? "outline-none focus-visible:outline-none"
+                : "focus-visible:outline-2 focus-visible:outline-ring",
               isDragging && "opacity-40",
             )}
           />
@@ -84,10 +87,7 @@ export function AssignmentTarget({
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: assignmentKey(account), disabled });
   return (
-    <div
-      ref={setNodeRef}
-      className={cn(className, isOver && "bg-accent/50 outline-1 outline-ring")}
-    >
+    <div ref={setNodeRef} className={cn(className, isOver && "bg-accent/50")}>
       {children}
     </div>
   );
