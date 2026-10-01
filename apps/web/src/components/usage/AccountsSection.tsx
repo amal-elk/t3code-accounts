@@ -167,10 +167,7 @@ export function AccountsSection({
   const movingAssignmentRef = useRef(false);
   const [assignmentError, setAssignmentError] = useState<string | null>(null);
   const [assignmentStatus, setAssignmentStatus] = useState("");
-  const assignmentSensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(KeyboardSensor),
-  );
+  const assignmentSensors = useSensors(useSensor(PointerSensor), useSensor(KeyboardSensor));
   const save: LedgerSave = async (environmentId, patch) => {
     const presentation = selected.get(environmentId);
     if (
