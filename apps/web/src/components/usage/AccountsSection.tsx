@@ -264,17 +264,6 @@ export function AccountsSection({
           >
             Add note
           </Button>
-          <Button
-            size="sm"
-            disabled={!defaultEnvironment}
-            onClick={() => {
-              if (defaultEnvironment)
-                setEditor({ kind: "event", environmentId: defaultEnvironment.id });
-            }}
-          >
-            <PlusIcon />
-            Add date
-          </Button>
         </div>
       </div>
       {unsupported ? (
@@ -301,20 +290,6 @@ export function AccountsSection({
                 <span className="text-xs text-muted-foreground">
                   {serviceAccounts.length} {serviceAccounts.length === 1 ? "account" : "accounts"}
                 </span>
-              ) : null}
-              {defaultEnvironment ? (
-                <div className="ms-auto">
-                  <Button
-                    variant="ghost"
-                    size="icon-sm"
-                    aria-label={`Add ${service} date`}
-                    onClick={() =>
-                      setEditor({ kind: "event", environmentId: defaultEnvironment.id, service })
-                    }
-                  >
-                    <PlusIcon />
-                  </Button>
-                </div>
               ) : null}
             </div>
             {serviceAccounts.length > 0 ? (
@@ -477,6 +452,21 @@ export function AccountsSection({
             <DateGroups
               entries={serviceDates.filter((entry) => entry.kind === "bankedReset")}
               title="Banked reset credits expire"
+              addLabel={`Add ${service} banked reset expiration`}
+              onAdd={
+                defaultEnvironment &&
+                (service === "Codex" ||
+                  service === "Claude Code" ||
+                  serviceDates.some((entry) => entry.kind === "bankedReset"))
+                  ? () =>
+                      setEditor({
+                        kind: "event",
+                        environmentId: defaultEnvironment.id,
+                        service,
+                        eventKind: "bankedReset",
+                      })
+                  : undefined
+              }
               revealEmails={revealEmails}
               now={now}
               onEdit={(entry) => {
@@ -492,6 +482,20 @@ export function AccountsSection({
             <DateGroups
               entries={serviceDates.filter((entry) => entry.kind === "cloudCredit")}
               title="Cloud session credits expire"
+              addLabel={`Add ${service} cloud credit expiration`}
+              onAdd={
+                defaultEnvironment &&
+                (service === "Claude Code" ||
+                  serviceDates.some((entry) => entry.kind === "cloudCredit"))
+                  ? () =>
+                      setEditor({
+                        kind: "event",
+                        environmentId: defaultEnvironment.id,
+                        service,
+                        eventKind: "cloudCredit",
+                      })
+                  : undefined
+              }
               revealEmails={revealEmails}
               now={now}
               onEdit={(entry) => {
@@ -509,6 +513,18 @@ export function AccountsSection({
                 (entry) => entry.kind !== "bankedReset" && entry.kind !== "cloudCredit",
               )}
               title="Dates"
+              addLabel={`Add ${service} date`}
+              onAdd={
+                defaultEnvironment
+                  ? () =>
+                      setEditor({
+                        kind: "event",
+                        environmentId: defaultEnvironment.id,
+                        service,
+                        eventKind: service === "Cursor" ? "renewal" : "creditExpiry",
+                      })
+                  : undefined
+              }
               revealEmails={revealEmails}
               now={now}
               onEdit={(entry) => {
@@ -552,6 +568,7 @@ export function AccountsSection({
         <AccountsEditorDialog
           key={`${editor.kind}:${editor.kind === "account" ? (editor.account?.id ?? "new") : (editor.id ?? "new")}`}
           editor={editor}
+          accounts={accounts}
           environments={environments}
           onSave={save}
           onClose={() => setEditor(null)}
@@ -564,17 +581,21 @@ export function AccountsSection({
 function DateGroups({
   entries,
   title,
+  addLabel,
+  onAdd,
   revealEmails,
   now,
   onEdit,
 }: {
   readonly entries: readonly AccountDate[];
   readonly title: string;
+  readonly addLabel: string;
+  readonly onAdd: (() => void) | undefined;
   readonly revealEmails: boolean;
   readonly now: number;
   readonly onEdit: (entry: AccountDate) => void;
 }) {
-  if (entries.length === 0) return null;
+  if (entries.length === 0 && !onAdd) return null;
   const groups = new Map<string, AccountDate[]>();
   for (const entry of entries) {
     const key = `${entry.date}:${entry.timeZone}`;
@@ -582,7 +603,14 @@ function DateGroups({
   }
   return (
     <div className="mt-3">
-      <h4 className="mb-1 text-xs font-medium text-(--account-accent)">{title}</h4>
+      <div className="mb-1 flex items-center gap-1">
+        <h4 className="text-xs font-medium text-(--account-accent)">{title}</h4>
+        {onAdd ? (
+          <Button size="icon-xs" variant="ghost" aria-label={addLabel} onClick={onAdd}>
+            <PlusIcon />
+          </Button>
+        ) : null}
+      </div>
       {[...groups].map(([key, items]) => {
         const first = items[0];
         if (!first) return null;
@@ -618,7 +646,9 @@ function DateGroups({
                       </TooltipPopup>
                     </Tooltip>
                   ) : null}
-                  {entry.account && entry.kind !== "bankedReset" && entry.kind !== "cloudCredit" ? (
+                  {entry.account &&
+                  ((entry.kind !== "bankedReset" && entry.kind !== "cloudCredit") ||
+                    entry.label !== ACCOUNT_EVENT_LABELS[entry.kind]) ? (
                     <span className="text-muted-foreground">{entry.label}</span>
                   ) : null}
                   {entry.origin === "saved" ? (

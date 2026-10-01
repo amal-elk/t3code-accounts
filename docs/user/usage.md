@@ -12,8 +12,10 @@ by date beneath each service. An absent percentage means the provider has not re
 
 Edit an account to record who is using it, or add dates and notes for any service. Credit
 expirations, billing renewals, and reminders can belong to one account or the whole workspace.
-Date-only entries retain their calendar date; entries with a time retain their selected time zone.
-Monthly and yearly entries show their next occurrence. Saved details belong to the selected
+Add a date in its section, then choose the account, date, optional time, and label. New times use
+your local time zone; editing preserves the entry's existing time zone. Cursor refresh and billing
+dates repeat monthly. Existing recurring entries keep their schedule and show their next occurrence.
+Date-only entries retain their calendar date. Saved details belong to the selected
 environment and survive refreshes and app updates. Editing or deleting them does not change a
 provider's subscription or consume a credit. Connected official servers can show quota but
 need the Accounts fork server to save these details.

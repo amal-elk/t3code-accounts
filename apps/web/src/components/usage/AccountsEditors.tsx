@@ -38,6 +38,7 @@ export type AccountsEditor =
       readonly kind: "event";
       readonly environmentId: EnvironmentId;
       readonly service?: string;
+      readonly eventKind?: LedgerEvent["kind"];
       readonly id?: string;
       readonly event?: LedgerEvent;
     }
@@ -100,11 +101,13 @@ function ZoneField({
 
 export function AccountsEditorDialog({
   editor,
+  accounts,
   environments,
   onSave,
   onClose,
 }: {
   readonly editor: AccountsEditor;
+  readonly accounts: readonly AccountRow[];
   readonly environments: readonly LedgerEnvironment[];
   readonly onSave: LedgerSave;
   readonly onClose: () => void;
@@ -162,13 +165,15 @@ export function AccountsEditorDialog({
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>
-            Saved on {environment?.label ?? "this environment"}, and shared with its connected
-            clients.
+            {editor.kind === "event"
+              ? `${accountService(editor.event?.service ?? editor.service ?? "Codex")} · ${ACCOUNT_EVENT_LABELS[editor.event?.kind ?? editor.eventKind ?? "creditExpiry"]}`
+              : `Saved on ${environment?.label ?? "this environment"}, and shared with its connected clients.`}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <div className="grid gap-4">
             {!existing &&
+            editor.kind !== "event" &&
             !(editor.kind === "account" && editor.account) &&
             environments.length > 1 ? (
               <Field label="Save on environment">
@@ -203,6 +208,15 @@ export function AccountsEditorDialog({
               <EventForm
                 event={editor.event}
                 service={editor.service}
+                eventKind={editor.eventKind}
+                accounts={accounts.filter(
+                  (account) =>
+                    account.service ===
+                      accountService(editor.event?.service ?? editor.service ?? "Codex") &&
+                    (!existing || account.environmentId === environmentId),
+                )}
+                environments={environments}
+                onEnvironmentChange={setEnvironmentId}
                 id={editor.id}
                 formId={formId}
                 onSave={save}
@@ -383,6 +397,10 @@ function AccountForm({
 function EventForm({
   event,
   service: initialService,
+  eventKind,
+  accounts,
+  environments,
+  onEnvironmentChange,
   id,
   formId,
   onSave,
@@ -390,24 +408,28 @@ function EventForm({
 }: {
   readonly event: LedgerEvent | undefined;
   readonly service: string | undefined;
+  readonly eventKind: LedgerEvent["kind"] | undefined;
+  readonly accounts: readonly AccountRow[];
+  readonly environments: readonly LedgerEnvironment[];
+  readonly onEnvironmentChange: (environmentId: EnvironmentId) => void;
   readonly id: string | undefined;
   readonly formId: string;
   readonly onSave: (patch: AccountLedgerPatch) => Promise<void>;
   readonly onError: (error: string | null) => void;
 }) {
-  const [service, setService] = useState(event?.service ?? initialService ?? "Codex");
-  const [account, setAccount] = useState(event?.account ?? "");
-  const [kind, setKind] = useState<LedgerEvent["kind"]>(event?.kind ?? "creditExpiry");
-  const [label, setLabel] = useState(event?.label ?? "");
+  const service = accountService(event?.service ?? initialService ?? "Codex");
+  const kind = event?.kind ?? eventKind ?? "creditExpiry";
+  const originalAccountLabel =
+    accounts.find((row) => row.id === event?.account)?.label ?? event?.account;
+  const [account, setAccount] = useState(originalAccountLabel ?? "");
+  const [label, setLabel] = useState(event?.label ?? ACCOUNT_EVENT_LABELS[kind]);
   const [date, setDate] = useState(event?.date ?? "");
   const [time, setTime] = useState(event?.time ?? "");
-  const [timeZone, setTimeZone] = useState(
+  const [timeZone] = useState(
     event?.timeZone ?? new Intl.DateTimeFormat().resolvedOptions().timeZone,
   );
-  const [amount, setAmount] = useState(event?.amount ?? "");
-  const [recurrence, setRecurrence] = useState<LedgerEvent["recurrence"]>(
-    event?.recurrence ?? "none",
-  );
+  const recurrence = event?.recurrence ?? (kind === "renewal" ? "monthly" : "none");
+  const choices = [...accounts].sort((a, b) => a.label.localeCompare(b.label));
   return (
     <form
       id={formId}
@@ -416,19 +438,26 @@ function EventForm({
         submission.preventDefault();
         onError(null);
         try {
-          if (!service.trim() || !date) throw new Error("Enter a service and date.");
+          if (!date) throw new Error("Choose a date.");
           accountDateTimestamp(date, time || undefined, timeZone);
           void onSave({
             events: {
               [id ?? randomUUID()]: {
-                service: accountService(service),
+                service,
                 label: label.trim() || ACCOUNT_EVENT_LABELS[kind],
-                ...(account.trim() ? { account: account.trim() } : {}),
+                ...(account.trim()
+                  ? {
+                      account:
+                        event?.account && account === originalAccountLabel
+                          ? event.account
+                          : account.trim(),
+                    }
+                  : {}),
                 kind,
                 date,
                 ...(time ? { time } : {}),
                 timeZone,
-                ...(amount.trim() ? { amount: amount.trim() } : {}),
+                ...(event?.amount ? { amount: event.amount } : {}),
                 recurrence,
               },
             },
@@ -438,55 +467,33 @@ function EventForm({
         }
       }}
     >
-      <Field label="Service">
-        {(fieldId) => (
-          <Input
-            id={fieldId}
-            value={service}
-            required
-            onChange={(event) => setService(event.target.value)}
-            placeholder="Linear"
-          />
-        )}
-      </Field>
-      <Field label="Account or scope (optional)">
-        {(fieldId) => (
-          <Input
-            id={fieldId}
-            value={account}
-            autoComplete="off"
-            onChange={(event) => setAccount(event.target.value)}
-            placeholder="Account email or workspace; leave blank for the service"
-          />
-        )}
-      </Field>
-      <Field label="Event">
+      <Field label="Account">
         {(fieldId) => (
           <select
             id={fieldId}
             className={selectStyle}
-            value={kind}
+            value={account}
             onChange={(event) => {
-              const value = event.target.value;
-              if (value in ACCOUNT_EVENT_LABELS) setKind(value as LedgerEvent["kind"]);
+              setAccount(event.target.value);
+              const row = choices.find((choice) => choice.label === event.target.value);
+              if (row) onEnvironmentChange(row.environmentId);
             }}
           >
-            {Object.entries(ACCOUNT_EVENT_LABELS).map(([value, title]) => (
-              <option key={value} value={value}>
-                {title}
+            <option value="">Whole section</option>
+            {account && !choices.some((choice) => choice.label === account) ? (
+              <option value={account}>{account}</option>
+            ) : null}
+            {choices.map((choice) => (
+              <option
+                key={choice.id}
+                value={choice.label}
+                disabled={!environments.find((item) => item.id === choice.environmentId)?.connected}
+              >
+                {choice.label}
+                {environments.length > 1 ? ` · ${choice.environmentLabel}` : ""}
               </option>
             ))}
           </select>
-        )}
-      </Field>
-      <Field label="Label (optional)">
-        {(fieldId) => (
-          <Input
-            id={fieldId}
-            value={label}
-            onChange={(event) => setLabel(event.target.value)}
-            placeholder={ACCOUNT_EVENT_LABELS[kind]}
-          />
         )}
       </Field>
       <div className="grid grid-cols-2 gap-3">
@@ -514,33 +521,14 @@ function EventForm({
           )}
         </Field>
       </div>
-      <ZoneField value={timeZone} onChange={setTimeZone} />
-      <Field label="Amount (optional)">
+      <Field label="Label">
         {(fieldId) => (
           <Input
             id={fieldId}
-            value={amount}
-            onChange={(event) => setAmount(event.target.value)}
-            placeholder="2 credits or $100"
+            value={label}
+            onChange={(event) => setLabel(event.target.value)}
+            placeholder={ACCOUNT_EVENT_LABELS[kind]}
           />
-        )}
-      </Field>
-      <Field label="Repeats">
-        {(fieldId) => (
-          <select
-            id={fieldId}
-            className={selectStyle}
-            value={recurrence}
-            onChange={(event) => {
-              const value = event.target.value;
-              if (value === "none" || value === "monthly" || value === "yearly")
-                setRecurrence(value);
-            }}
-          >
-            <option value="none">Once</option>
-            <option value="monthly">Monthly</option>
-            <option value="yearly">Yearly</option>
-          </select>
         )}
       </Field>
     </form>
