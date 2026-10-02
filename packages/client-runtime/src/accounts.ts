@@ -210,7 +210,20 @@ export function collectAccounts(
     const fresh =
       Date.parse(next.limits?.checkedAt ?? "") > Date.parse(previous.limits?.checkedAt ?? "") ||
       (!previous.limits && next.limits);
-    const winner = fresh ? next : previous;
+    // One connection's failed or unsupported probe cannot erase another
+    // authenticated connection's successful reading for the same account.
+    const readable = (limits: ServerProviderUsageLimits | undefined) =>
+      !limits?.unavailable && Boolean(primaryAccountWindow(limits));
+    const nextReadable = readable(next.limits);
+    const previousReadable = readable(previous.limits);
+    const winner =
+      nextReadable !== previousReadable
+        ? nextReadable
+          ? next
+          : previous
+        : fresh
+          ? next
+          : previous;
     // Prefer a direct authenticated provider for the trigger. A reporting-only
     // source never borrows another account's provider route.
     const trigger = winner.saved

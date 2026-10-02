@@ -200,6 +200,33 @@ describe("Accounts view selection", () => {
     expect(rows[0]?.trigger?.environmentId).toBe(local);
   });
 
+  it.each(["probeFailed", "unsupported"] as const)(
+    "keeps a successful zero reading when a second connection reports %s, while refreshing spent credits",
+    (reason) => {
+      const good = provider({ usageLimits: { ...limits, resetCredits: { availableCount: 2 } } });
+      const failed = provider({
+        instanceId: ProviderInstanceId.make("other"),
+        usageLimits: {
+          checkedAt: "2026-09-29T21:00:00Z",
+          windows: [],
+          unavailable: { reason },
+          resetCredits: { availableCount: 0, credits: [] },
+        },
+      });
+      for (const providers of [
+        [good, failed],
+        [failed, good],
+      ]) {
+        const rows = collectAccounts(new Map([[local, presentation(providers)]]), now);
+        expect(rows).toHaveLength(1);
+        expect(rows[0]?.limits?.windows[0]?.usedPercent).toBe(100);
+        expect(rows[0]?.limits?.checkedAt).toBe(limits.checkedAt);
+        expect(rows[0]?.limits?.unavailable).toBeUndefined();
+        expect(rows[0]?.limits?.resetCredits?.availableCount).toBe(0);
+      }
+    },
+  );
+
   it("never routes a manual-only account or borrows another environment's confirmation", () => {
     const map = new Map([
       [

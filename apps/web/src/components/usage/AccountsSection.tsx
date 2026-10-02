@@ -15,7 +15,6 @@ import {
   accountResetNotTriggered,
   collectAccounts,
   collectAccountDates,
-  primaryAccountWindow,
   type AccountDate,
   type AccountRow,
 } from "@t3tools/client-runtime/accounts";
@@ -44,6 +43,7 @@ import {
   assignmentCollisionDetection,
 } from "./AccountAssignment";
 import { useAccountAssignmentMove } from "./useAccountAssignmentMove";
+import { useAccountUsage } from "./useAccountUsage";
 
 const SERVICE_ORDER = ["Codex", "Claude Code", "Cursor", "Linear"];
 const SERVICE_ACCENTS = new Map([
@@ -81,6 +81,7 @@ function exactTimestamp(value: string, timeZone: string) {
     day: "numeric",
     year: "numeric",
     hour: "numeric",
+    hour12: true,
     minute: "2-digit",
     timeZoneName: "short",
   }).format(new Date(value));
@@ -104,15 +105,19 @@ function twelveHourTime(time: string) {
 function Quota({
   window,
   label,
+  missingLabel,
 }: {
   readonly window: ServerProviderUsageWindow | undefined;
   readonly label: string;
+  readonly missingLabel: string;
 }) {
   const percent = window ? remainingPercent(window) : null;
+  if (percent === null)
+    return <span className="text-xs text-muted-foreground">{missingLabel}</span>;
   return (
     <div className="flex min-w-0 items-baseline gap-1.5 whitespace-nowrap">
       <span className="text-base leading-none font-semibold text-(--account-accent) tabular-nums">
-        {percent === null ? "—" : `${percent}%`}
+        {percent}%
       </span>
       <span className="text-3xs text-muted-foreground">{label}</span>
     </div>
@@ -141,6 +146,7 @@ export function AccountsSection({
   );
   const timeZone = new Intl.DateTimeFormat().resolvedOptions().timeZone;
   const accounts = useMemo(() => collectAccounts(selected, now), [selected, now]);
+  const usageFor = useAccountUsage(accounts);
   const dates = useMemo(
     () => collectAccountDates(selected, accounts, timeZone, now),
     [selected, accounts, timeZone, now],
@@ -393,14 +399,15 @@ export function AccountsSection({
                     </span>
                   </div>
                   {serviceAccounts.map((account) => {
-                    const main = primaryAccountWindow(account.limits);
+                    const usage = usageFor(account);
+                    const main = usage.main;
                     const weeklyLabel =
                       main?.kind === "monthly"
                         ? "monthly"
                         : main?.kind === "session"
                           ? "session"
                           : "weekly";
-                    const session = account.limits?.windows.find(
+                    const session = usage.reading?.windows.find(
                       (window) => window.kind === "session",
                     );
                     const enabled =
@@ -423,7 +430,7 @@ export function AccountsSection({
                     const hasSecondaryDetails =
                       (service === "Claude Code" && session && session !== main) ||
                       selected.size > 1 ||
-                      account.limits?.unavailable;
+                      usage.lastKnown;
                     return (
                       <AssignmentTarget
                         key={account.id}
@@ -439,7 +446,11 @@ export function AccountsSection({
                         className="grid min-w-0 grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-0.5 border-t border-border/45 py-1.5 first:border-t-0 sm:grid-cols-[5.5rem_minmax(0,1fr)_minmax(13rem,auto)]"
                       >
                         <div className="row-span-2 sm:row-span-1">
-                          <Quota window={main} label={weeklyLabel} />
+                          <Quota
+                            window={main}
+                            label={weeklyLabel}
+                            missingLabel={usage.missingLabel}
+                          />
                         </div>
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
@@ -464,13 +475,18 @@ export function AccountsSection({
                                 </span>
                               ) : null}
                               {selected.size > 1 ? <span>{account.environmentLabel}</span> : null}
-                              {account.limits?.unavailable ? (
-                                <span>
-                                  Usage unavailable
-                                  {account.limits.unavailable.reason === "probeFailed"
-                                    ? " · last reported values"
-                                    : ""}
-                                </span>
+                              {usage.lastKnown && usage.reading ? (
+                                <Tooltip>
+                                  <TooltipTrigger render={<span tabIndex={0} />}>
+                                    Last known
+                                  </TooltipTrigger>
+                                  <TooltipPopup>
+                                    Last read {exactTimestamp(usage.reading.checkedAt, timeZone)}
+                                    {account.live
+                                      ? ". Current usage could not be read."
+                                      : ". This account is not currently connected."}
+                                  </TooltipPopup>
+                                </Tooltip>
                               ) : null}
                             </div>
                           ) : null}
@@ -500,7 +516,7 @@ export function AccountsSection({
                                   <span className="font-medium tabular-nums">
                                     {account.resetAt
                                       ? exactTimestamp(account.resetAt, timeZone)
-                                      : "—"}
+                                      : "No reset date"}
                                   </span>
                                 </TooltipTrigger>
                                 <TooltipPopup>{resetDetail}</TooltipPopup>
