@@ -10,6 +10,9 @@ import {
 import type { EnvironmentId, ServerProviderUsageWindow } from "@t3tools/contracts";
 import {
   accountDateIsPast,
+  accountPillRow,
+  type AccountPillRow,
+  type AccountPillRowKind,
   accountLedgerContainsPatch,
   accountService,
   accountResetNotTriggered,
@@ -37,13 +40,13 @@ import {
   type LedgerSave,
 } from "./AccountsEditors";
 import {
-  AssignmentPill,
-  AssignmentPreview,
-  AssignmentTarget,
-  assignmentKey,
-  assignmentCollisionDetection,
-} from "./AccountAssignment";
-import { useAccountAssignmentMove } from "./useAccountAssignmentMove";
+  AccountPills,
+  PillPreview,
+  PillTarget,
+  PillEditor,
+  pillCollisionDetection,
+} from "./AccountPills";
+import { useAccountPills, pillRowKey } from "./useAccountPills";
 import { useAccountUsage } from "./useAccountUsage";
 
 const SERVICE_ORDER = ["Codex", "Claude Code", "Cursor", "Linear"];
@@ -156,7 +159,7 @@ export function AccountsSection({
     label: presentation.entry.target.label,
     connected:
       presentation.connection.phase === "connected" &&
-      presentation.serverConfig?.accountsVersion === 2,
+      presentation.serverConfig?.accountsVersion === 3,
   }));
   const defaultEnvironment = environments.find((environment) => environment.connected);
   const update = useAtomCommand(serverEnvironment.updateSettings, { reportFailure: false });
@@ -168,16 +171,23 @@ export function AccountsSection({
   const [triggering, setTriggering] = useState<string | null>(null);
   const triggeringRef = useRef(false);
   const [statuses, setStatuses] = useState<Record<string, string>>({});
-  const [draggedAssignment, setDraggedAssignment] = useState<{
-    readonly account: AccountRow;
-    readonly assignee: string;
+  const [draggedPill, setDraggedPill] = useState<{
+    readonly row: AccountPillRow;
+    readonly text: string;
   } | null>(null);
-  const assignmentSensors = useSensors(useSensor(PointerSensor), useSensor(KeyboardSensor));
+  const [pillEditor, setPillEditor] = useState<{
+    readonly row: AccountPillRow;
+    readonly text?: string;
+  } | null>(null);
+  const pillSensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor),
+  );
   const save: LedgerSave = async (environmentId, patch) => {
     const presentation = selected.get(environmentId);
     if (
       presentation?.connection.phase !== "connected" ||
-      presentation.serverConfig?.accountsVersion !== 2
+      presentation.serverConfig?.accountsVersion !== 3
     )
       throw new Error("Connect this environment to the Accounts fork before saving details.");
     const result = await update({ environmentId, input: { patch: { accountLedger: patch } } });
@@ -188,15 +198,58 @@ export function AccountsSection({
         "This server did not retain the change. Update it to a matching Accounts build before saving.",
       );
   };
+  const notes = [...selected].flatMap(([environmentId, presentation]) =>
+    Object.entries(presentation.serverConfig?.settings.accountLedger.notes ?? {}).map(
+      ([id, note]) => ({ id, environmentId, note }),
+    ),
+  );
+  const rawPillRows = [
+    ...accounts.map((account) =>
+      accountPillRow(selected.get(account.environmentId)!.serverConfig!.settings.accountLedger, {
+        kind: "account",
+        id: account.id,
+        environmentId: account.environmentId,
+        label: account.label,
+        account,
+      }),
+    ),
+    ...dates.map((entry) =>
+      accountPillRow(selected.get(entry.environmentId)!.serverConfig!.settings.accountLedger, {
+        kind: "date",
+        id: entry.id,
+        environmentId: entry.environmentId,
+        label: entry.account ?? entry.label,
+      }),
+    ),
+    ...notes.map(({ id, environmentId, note }) =>
+      accountPillRow(selected.get(environmentId)!.serverConfig!.settings.accountLedger, {
+        kind: "note",
+        id,
+        environmentId,
+        label: note.text,
+      }),
+    ),
+  ];
   const {
-    assignmentAccounts,
-    movingAssignment,
-    assignmentError,
-    assignmentStatus,
-    moveAssignment,
-    setAssignmentError,
-    clearAssignmentFeedback,
-  } = useAccountAssignmentMove(accounts, save);
+    pillRows,
+    savingPill,
+    error: pillError,
+    status: pillStatus,
+    setPills,
+    movePill,
+    setError: setPillError,
+    clearFeedback,
+  } = useAccountPills(rawPillRows, save);
+  const pillRowFor = (kind: AccountPillRowKind, id: string, environmentId: EnvironmentId) =>
+    pillRows.find(
+      (row) => row.kind === kind && row.id === id && row.environmentId === environmentId,
+    )!;
+  const pillDisabled = (row: AccountPillRow) =>
+    !environments.find((environment) => environment.id === row.environmentId)?.connected ||
+    savingPill ||
+    Boolean(draggedPill && draggedPill.row.environmentId !== row.environmentId);
+  const onPillEdit = (row: AccountPillRow, text?: string) =>
+    setPillEditor({ row, ...(text !== undefined ? { text } : {}) });
   const trigger = async (account: AccountRow) => {
     if (
       !account.trigger ||
@@ -255,11 +308,6 @@ export function AccountsSection({
       setTriggering(null);
     }
   };
-  const notes = [...selected].flatMap(([environmentId, presentation]) =>
-    Object.entries(presentation.serverConfig?.settings.accountLedger.notes ?? {}).map(
-      ([id, note]) => ({ id, environmentId, note }),
-    ),
-  );
   const services = [
     ...new Set([
       ...SERVICE_ORDER,
@@ -270,7 +318,7 @@ export function AccountsSection({
   ];
   const unsupported = [...selected].some(
     ([, presentation]) =>
-      presentation.serverConfig && presentation.serverConfig.accountsVersion !== 2,
+      presentation.serverConfig && presentation.serverConfig.accountsVersion !== 3,
   );
   return (
     <div className="min-w-0 space-y-5 pb-4">
@@ -316,66 +364,59 @@ export function AccountsSection({
           save dates, assignments, and use Trigger.
         </p>
       ) : null}
-      {assignmentError ? (
+      {pillError ? (
         <p role="alert" className="text-xs text-destructive">
-          {assignmentError}
+          {pillError}
         </p>
       ) : null}
-      {assignmentStatus ? (
+      {pillStatus ? (
         <p role="status" className="sr-only">
-          {assignmentStatus}
+          {pillStatus}
         </p>
       ) : null}
       <DndContext
-        sensors={assignmentSensors}
-        collisionDetection={assignmentCollisionDetection}
+        sensors={pillSensors}
+        collisionDetection={pillCollisionDetection}
         accessibility={{
           screenReaderInstructions: {
             draggable:
-              "Press Space to pick up an assignment, use the arrow keys to move to another account, then press Space to drop. Press Escape to cancel.",
+              "Press Space to pick up a pill, use the arrow keys to move to another row, then press Space to drop. Press Escape to cancel.",
           },
           announcements: {
-            onDragStart: ({ active }) =>
-              `Picked up ${active.data.current?.assignee ?? "assignment"}.`,
+            onDragStart: ({ active }) => `Picked up ${active.data.current?.text ?? "pill"}.`,
             onDragOver: ({ over }) => {
-              const target = accounts.find((account) => assignmentKey(account) === over?.id);
+              const target = pillRows.find((row) => pillRowKey(row) === over?.id);
               return target
-                ? `Over ${revealEmails ? target.label : `${target.service} account`}.`
-                : "Outside an account. Drop to cancel.";
+                ? `Over ${revealEmails ? target.label : "row"}.`
+                : "Outside a row. Drop to cancel.";
             },
-            onDragEnd: () => "Assignment drag ended.",
-            onDragCancel: () => "Assignment move canceled.",
+            onDragEnd: () => "Pill drag ended.",
+            onDragCancel: () => "Pill move canceled.",
           },
         }}
         onDragStart={({ active }) => {
-          clearAssignmentFeedback();
-          const account = accounts.find(
-            (candidate) => assignmentKey(candidate) === active.data.current?.accountKey,
+          clearFeedback();
+          const row = pillRows.find(
+            (candidate) => pillRowKey(candidate) === active.data.current?.rowKey,
           );
-          const assignee = active.data.current?.assignee;
-          setDraggedAssignment(
-            account && typeof assignee === "string" ? { account, assignee } : null,
-          );
+          const text = active.data.current?.text;
+          setDraggedPill(row && typeof text === "string" ? { row, text } : null);
         }}
-        onDragCancel={() => setDraggedAssignment(null)}
+        onDragCancel={() => setDraggedPill(null)}
         onDragEnd={({ active, over }) => {
-          setDraggedAssignment(null);
-          const source = accounts.find(
-            (account) => assignmentKey(account) === active.data.current?.accountKey,
-          );
-          const target = accounts.find((account) => assignmentKey(account) === over?.id);
-          if (!source || !target || !draggedAssignment) return;
-          if (!source.saved?.assignees?.includes(draggedAssignment.assignee)) {
-            setAssignmentError("This assignment changed while you were dragging. Try again.");
+          setDraggedPill(null);
+          const source = pillRows.find((row) => pillRowKey(row) === active.data.current?.rowKey);
+          const target = pillRows.find((row) => pillRowKey(row) === over?.id);
+          if (!source || !target || !draggedPill) return;
+          if (!source.pills.includes(draggedPill.text)) {
+            setPillError("This pill changed while you were dragging. Try again.");
             return;
           }
-          void moveAssignment(source, target, draggedAssignment.assignee);
+          void movePill(source, target, draggedPill.text).catch(() => {});
         }}
       >
         {services.map((service) => {
-          const serviceAccounts = assignmentAccounts.filter(
-            (account) => account.service === service,
-          );
+          const serviceAccounts = accounts.filter((account) => account.service === service);
           const serviceDates = dates.filter((date) => date.service === service);
           const serviceNotes = notes.filter(
             (entry) => accountService(entry.note.service) === service,
@@ -426,7 +467,7 @@ export function AccountsSection({
                       selected.get(account.trigger.environmentId)?.connection.phase ===
                         "connected" &&
                       selected.get(account.trigger.environmentId)?.serverConfig?.accountsVersion ===
-                        2;
+                        3;
                     const notTriggered = accountResetNotTriggered(account, now);
                     const resetDetail = notTriggered
                       ? triggerEnabled
@@ -442,17 +483,12 @@ export function AccountsSection({
                       selected.size > 1 ||
                       usage.lastKnown;
                     return (
-                      <AssignmentTarget
+                      <PillTarget
                         key={account.id}
-                        account={account}
-                        disabled={
-                          !enabled ||
-                          movingAssignment ||
-                          Boolean(
-                            draggedAssignment &&
-                            draggedAssignment.account.environmentId !== account.environmentId,
-                          )
-                        }
+                        row={pillRowFor("account", account.id, account.environmentId)}
+                        disabled={pillDisabled(
+                          pillRowFor("account", account.id, account.environmentId),
+                        )}
                         className="grid min-w-0 grid-cols-[5.5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-0.5 border-t border-border/45 py-1.5 first:border-t-0 sm:grid-cols-[5.5rem_minmax(0,1fr)_minmax(13rem,auto)]"
                       >
                         <div className="row-span-2 sm:row-span-1">
@@ -465,14 +501,13 @@ export function AccountsSection({
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm">
                             <SensitiveLabel value={account.label} reveal={revealEmails} />
-                            {account.saved?.assignees?.map((assignee) => (
-                              <AssignmentPill
-                                key={assignee}
-                                account={account}
-                                assignee={assignee}
-                                disabled={!enabled || movingAssignment}
-                              />
-                            ))}
+                            <AccountPills
+                              row={pillRowFor("account", account.id, account.environmentId)}
+                              disabled={pillDisabled(
+                                pillRowFor("account", account.id, account.environmentId),
+                              )}
+                              onEdit={onPillEdit}
+                            />
                           </div>
                           {hasSecondaryDetails ? (
                             <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
@@ -545,7 +580,7 @@ export function AccountsSection({
                                     {triggering === account.id ? "Triggering…" : "Trigger"}
                                   </MenuItem>
                                   <MenuItem
-                                    disabled={!enabled || movingAssignment}
+                                    disabled={!enabled || savingPill}
                                     onClick={() =>
                                       setEditor({
                                         kind: "account",
@@ -583,7 +618,7 @@ export function AccountsSection({
                                 <Button
                                   variant="ghost"
                                   size="icon-xs"
-                                  disabled={!enabled || movingAssignment}
+                                  disabled={!enabled || savingPill}
                                   aria-label="Edit account details"
                                   onClick={() =>
                                     setEditor({
@@ -612,7 +647,7 @@ export function AccountsSection({
                             </p>
                           ) : null}
                         </div>
-                      </AssignmentTarget>
+                      </PillTarget>
                     );
                   })}
                 </div>
@@ -623,7 +658,7 @@ export function AccountsSection({
               {service === "Linear"
                 ? [...selected].map(([environmentId, presentation]) =>
                     presentation.connection.phase === "connected" &&
-                    presentation.serverConfig?.accountsVersion === 2 ? (
+                    presentation.serverConfig?.accountsVersion === 3 ? (
                       <LinearAccountSummary
                         key={environmentId}
                         environmentId={environmentId}
@@ -654,6 +689,9 @@ export function AccountsSection({
                 }
                 revealEmails={revealEmails}
                 now={now}
+                pillRowFor={pillRowFor}
+                pillDisabled={pillDisabled}
+                onPillEdit={onPillEdit}
                 onEdit={(entry) => {
                   if (entry.saved)
                     setEditor({
@@ -683,6 +721,9 @@ export function AccountsSection({
                 }
                 revealEmails={revealEmails}
                 now={now}
+                pillRowFor={pillRowFor}
+                pillDisabled={pillDisabled}
+                onPillEdit={onPillEdit}
                 onEdit={(entry) => {
                   if (entry.saved)
                     setEditor({
@@ -712,6 +753,9 @@ export function AccountsSection({
                 }
                 revealEmails={revealEmails}
                 now={now}
+                pillRowFor={pillRowFor}
+                pillDisabled={pillDisabled}
+                onPillEdit={onPillEdit}
                 onEdit={(entry) => {
                   if (entry.saved)
                     setEditor({
@@ -725,11 +769,18 @@ export function AccountsSection({
               {serviceNotes.length > 0 ? (
                 <div className="mt-2 space-y-1">
                   {serviceNotes.map(({ id, environmentId, note }) => (
-                    <div
+                    <PillTarget
                       key={`${environmentId}:${id}`}
-                      className="flex items-start gap-2 text-sm text-muted-foreground"
+                      row={pillRowFor("note", id, environmentId)}
+                      disabled={pillDisabled(pillRowFor("note", id, environmentId))}
+                      className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground"
                     >
                       <p className="min-w-0 whitespace-pre-wrap break-words">{note.text}</p>
+                      <AccountPills
+                        row={pillRowFor("note", id, environmentId)}
+                        disabled={pillDisabled(pillRowFor("note", id, environmentId))}
+                        onEdit={onPillEdit}
+                      />
                       <Button
                         variant="ghost"
                         size="icon-xs"
@@ -742,7 +793,7 @@ export function AccountsSection({
                       >
                         <PencilIcon />
                       </Button>
-                    </div>
+                    </PillTarget>
                   ))}
                 </div>
               ) : null}
@@ -750,9 +801,28 @@ export function AccountsSection({
           );
         })}
         <DragOverlay dropAnimation={null}>
-          {draggedAssignment ? <AssignmentPreview assignee={draggedAssignment.assignee} /> : null}
+          {draggedPill ? <PillPreview text={draggedPill.text} /> : null}
         </DragOverlay>
       </DndContext>
+      {pillEditor ? (
+        <PillEditor
+          key={`${pillRowKey(pillEditor.row)}:${pillEditor.text ?? "new"}`}
+          row={
+            pillRowFor(pillEditor.row.kind, pillEditor.row.id, pillEditor.row.environmentId) ??
+            pillEditor.row
+          }
+          {...(pillEditor.text !== undefined ? { text: pillEditor.text } : {})}
+          onSave={async (pills) => {
+            const row = pillRows.find(
+              (candidate) => pillRowKey(candidate) === pillRowKey(pillEditor.row),
+            );
+            if (!row)
+              throw new Error("This row is no longer available. Close this editor and refresh.");
+            await setPills(row, pills);
+          }}
+          onClose={() => setPillEditor(null)}
+        />
+      ) : null}
       {editor ? (
         <AccountsEditorDialog
           key={`${editor.kind}:${editor.kind === "account" ? (editor.account?.id ?? "new") : (editor.id ?? "new")}`}
@@ -775,6 +845,9 @@ function DateGroups({
   revealEmails,
   now,
   onEdit,
+  pillRowFor,
+  pillDisabled,
+  onPillEdit,
 }: {
   readonly entries: readonly AccountDate[];
   readonly title: string;
@@ -783,6 +856,13 @@ function DateGroups({
   readonly revealEmails: boolean;
   readonly now: number;
   readonly onEdit: (entry: AccountDate) => void;
+  readonly pillRowFor: (
+    kind: AccountPillRowKind,
+    id: string,
+    environmentId: EnvironmentId,
+  ) => AccountPillRow;
+  readonly pillDisabled: (row: AccountPillRow) => boolean;
+  readonly onPillEdit: (row: AccountPillRow, text?: string) => void;
 }) {
   if (entries.length === 0 && !onAdd) return null;
   const groups = new Map<string, AccountDate[]>();
@@ -817,8 +897,10 @@ function DateGroups({
             </div>
             <div className="grid min-w-0 gap-y-0.5">
               {items.map((entry) => (
-                <div
+                <PillTarget
                   key={`${entry.environmentId}:${entry.id}`}
+                  row={pillRowFor("date", entry.id, entry.environmentId)}
+                  disabled={pillDisabled(pillRowFor("date", entry.id, entry.environmentId))}
                   className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs"
                 >
                   <SensitiveLabel value={entry.account ?? entry.label} reveal={revealEmails} />
@@ -850,10 +932,15 @@ function DateGroups({
                       <PencilIcon />
                     </Button>
                   ) : null}
+                  <AccountPills
+                    row={pillRowFor("date", entry.id, entry.environmentId)}
+                    disabled={pillDisabled(pillRowFor("date", entry.id, entry.environmentId))}
+                    onEdit={onPillEdit}
+                  />
                   {entry.saved?.recurrence && entry.saved.recurrence !== "none" ? (
                     <span className="text-3xs text-muted-foreground">{entry.saved.recurrence}</span>
                   ) : null}
-                </div>
+                </PillTarget>
               ))}
             </div>
           </div>

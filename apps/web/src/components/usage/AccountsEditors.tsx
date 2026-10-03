@@ -275,7 +275,6 @@ function AccountForm({
 }) {
   const [service, setService] = useState(account?.service ?? "Codex");
   const [label, setLabel] = useState(account?.label ?? "");
-  const [assignees, setAssignees] = useState(account?.saved?.assignees?.join(", ") ?? "");
   const [zone, setZone] = useState(new Intl.DateTimeFormat().resolvedOptions().timeZone);
   const [reset, setReset] = useState(() => {
     if (!account?.saved?.resetAt) return "";
@@ -308,20 +307,14 @@ function AccountForm({
                 accountDateTimestamp(reset.slice(0, 10), reset.slice(11, 16), zone),
               ).toISOString()
             : undefined;
-          const people = [
-            ...new Set(
-              assignees
-                .split(",")
-                .map((name) => name.trim())
-                .filter(Boolean),
-            ),
-          ];
           void onSave({
             accounts: {
               [account?.id ?? randomUUID()]: {
                 service: accountService(service),
                 label: label.trim(),
-                ...(people.length > 0 ? { assignees: people } : {}),
+                ...(account?.saved?.assignees !== undefined
+                  ? { assignees: account.saved.assignees }
+                  : {}),
                 ...(resetAt ? { resetAt } : {}),
                 ...(resetNotTriggered ? { resetNotTriggered: true } : {}),
                 ...(account?.saved?.billingDay ? { billingDay: account.saved.billingDay } : {}),
@@ -356,17 +349,6 @@ function AccountForm({
           />
         )}
       </Field>
-      <Field label="Who is using it (optional)">
-        {(id) => (
-          <Input
-            id={id}
-            value={assignees}
-            onChange={(event) => setAssignees(event.target.value)}
-            placeholder="Amal, Alex"
-          />
-        )}
-      </Field>
-      <p className="-mt-2 text-xs text-muted-foreground">Separate names with a comma.</p>
       <Field label="Saved reset date and time (optional)">
         {(id) => (
           <Input

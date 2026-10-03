@@ -24,6 +24,32 @@ import {
 const FOLDED_SERVER_SETTINGS = { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: true };
 
 describe("serverSettings helpers", () => {
+  it("saves and removes row pills without changing dates, notes or other clients' pills", () => {
+    const first = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      accountLedger: {
+        rowPills: { account: ["Amal using"] },
+        events: {
+          date: {
+            service: "claude",
+            label: "Credits expire",
+            kind: "cloudCredit",
+            date: "2026-11-04",
+            timeZone: "America/Los_Angeles",
+            recurrence: "none",
+          },
+        },
+      },
+    });
+    const second = applyServerSettingsPatch(first, {
+      accountLedger: { rowPills: { date: ["Use first"] } },
+    });
+    const moved = applyServerSettingsPatch(second, {
+      accountLedger: { rowPills: { account: null, date: ["Use first", "Amal using"] } },
+    });
+    expect(moved.accountLedger.rowPills).toEqual({ date: ["Use first", "Amal using"] });
+    expect(moved.accountLedger.events).toEqual(first.accountLedger.events);
+    expect(second.accountLedger.rowPills).toEqual({ account: ["Amal using"], date: ["Use first"] });
+  });
   it("merges account ledger edits per record and removes cleared optional fields", () => {
     const account = { service: "codex", label: "work@example.test" };
     const event = {

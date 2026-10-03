@@ -1860,7 +1860,7 @@ const makeWsRpcLayer = (
               otlpLogsEnabled: config.otlpLogsUrl !== undefined,
             },
             settings,
-            accountsVersion: 2 as const,
+            accountsVersion: 3 as const,
             shellResumeCompletionMarker: true,
             ...(fileManagerRevealKind === undefined
               ? {}

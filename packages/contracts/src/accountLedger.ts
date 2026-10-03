@@ -40,6 +40,9 @@ const AccountResetAt = Schema.String.check(
   ),
 );
 const AccountLabel = TrimmedNonEmptyString.check(Schema.isMaxLength(500));
+const AccountPills = Schema.Array(AccountLabel).check(
+  Schema.makeFilter((pills) => new Set(pills).size === pills.length || "Duplicate pill."),
+);
 
 /** Keys in `AccountLedger.accounts` own identity; provider usage stays outside this record. */
 const AccountRecordFields = {
@@ -108,6 +111,8 @@ export type AccountNote = typeof AccountNote.Type;
 
 /** Server-local annotations shared by every connected client. Never store credentials here. */
 export const AccountLedger = Schema.Struct({
+  /** Full pill text keyed by row kind and ID; includes provider-owned date rows. */
+  rowPills: Schema.optionalKey(Schema.Record(TrimmedNonEmptyString, AccountPills)),
   accounts: Schema.Record(TrimmedNonEmptyString, AccountRecord).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -122,6 +127,7 @@ export type AccountLedger = typeof AccountLedger.Type;
 
 /** Replace only the named records, preserving other clients' edits. `null` deletes a record. */
 export const AccountLedgerPatch = Schema.Struct({
+  rowPills: Schema.optionalKey(Schema.Record(TrimmedNonEmptyString, Schema.NullOr(AccountPills))),
   accounts: Schema.optionalKey(Schema.Record(TrimmedNonEmptyString, Schema.NullOr(AccountRecord))),
   events: Schema.optionalKey(Schema.Record(TrimmedNonEmptyString, Schema.NullOr(AccountEvent))),
   notes: Schema.optionalKey(Schema.Record(TrimmedNonEmptyString, Schema.NullOr(AccountNote))),

@@ -318,6 +318,42 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     ).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("persists row pills without changing account details or expiration dates", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const account = { service: "Codex", label: "work", resetNotTriggered: true };
+      const event = {
+        service: "Claude Code",
+        label: "Credit expires",
+        kind: "cloudCredit" as const,
+        date: "2026-11-04",
+        timeZone: "America/Los_Angeles",
+        recurrence: "none" as const,
+      };
+      yield* serverSettings.updateSettings({
+        accountLedger: {
+          accounts: { work: account },
+          events: { deadline: event },
+          rowPills: { work: ["Amal using"] },
+        },
+      });
+      yield* serverSettings.updateSettings({
+        accountLedger: { rowPills: { deadline: ["Use first", "A, B"], work: null } },
+      });
+      const persisted = yield* fileSystem
+        .readFileString(serverConfig.settingsPath)
+        .pipe(Effect.flatMap(decodeServerSettingsJson));
+      assert.deepStrictEqual(persisted.accountLedger, {
+        accounts: { work: account },
+        events: { deadline: event },
+        notes: {},
+        rowPills: { deadline: ["Use first", "A, B"] },
+      });
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("migrates saved account assignments before persisting a move to a shared row", () =>
     Effect.gen(function* () {
       const serverConfig = yield* ServerConfig.ServerConfig;

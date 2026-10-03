@@ -60,34 +60,68 @@ export interface AccountDate {
   readonly saved: LedgerEvent | undefined;
 }
 
-/** Move one person, preserving the other people and details on both account rows. */
-export function moveAccountAssignment(
-  source: AccountRow,
-  target: AccountRow,
-  assignee: string,
+export type AccountPillRowKind = "account" | "date" | "note";
+export interface AccountPillRow {
+  readonly id: string;
+  readonly kind: AccountPillRowKind;
+  readonly environmentId: EnvironmentId;
+  readonly label: string;
+  readonly pills: readonly string[];
+  readonly account?: AccountRow;
+}
+
+export function accountPillRowKey(row: Pick<AccountPillRow, "kind" | "id">) {
+  return JSON.stringify([row.kind, row.id]);
+}
+
+/** Retained people annotations become full-text pills on their first pill edit. */
+export function accountPillRow(
+  ledger: AccountLedger,
+  row: Omit<AccountPillRow, "pills">,
+): AccountPillRow {
+  return {
+    ...row,
+    pills:
+      ledger.rowPills?.[accountPillRowKey(row)] ??
+      row.account?.saved?.assignees?.map((name) => `${name} using`) ??
+      [],
+  };
+}
+
+/** Only annotation keys change; quota, dates and notes keep their native owners. */
+export function accountPillPatch(rows: readonly AccountPillRow[]): AccountLedgerPatch {
+  const accounts: Record<string, LedgerAccount> = {};
+  for (const row of rows) {
+    if (row.account && !row.account.saved) {
+      accounts[row.id] = { service: row.account.service, label: row.account.label };
+    } else if (row.account?.saved?.assignees !== undefined) {
+      const { assignees: _legacy, ...details } = row.account.saved;
+      accounts[row.id] = details;
+    }
+  }
+  return {
+    rowPills: Object.fromEntries(
+      rows.map((row) => [accountPillRowKey(row), row.pills.length ? row.pills : null]),
+    ),
+    ...(Object.keys(accounts).length ? { accounts } : {}),
+  };
+}
+
+export function moveAccountPill(
+  source: AccountPillRow,
+  target: AccountPillRow,
+  text: string,
 ): AccountLedgerPatch | null {
   if (
-    !source.saved?.assignees?.includes(assignee) ||
-    source.id === target.id ||
+    !source.pills.includes(text) ||
+    accountPillRowKey(source) === accountPillRowKey(target) ||
     source.environmentId !== target.environmentId
   )
     return null;
-  const sourceRecord = source.saved ?? { service: source.service, label: source.label };
-  const targetRecord = target.saved ?? { service: target.service, label: target.label };
-  const { assignees: previousAssignees, ...sourceDetails } = sourceRecord;
-  const remaining = previousAssignees?.filter((person) => person !== assignee) ?? [];
-  return {
-    accounts: {
-      [source.id]: {
-        ...sourceDetails,
-        ...(remaining.length > 0 ? { assignees: remaining } : {}),
-      },
-      [target.id]: {
-        ...targetRecord,
-        assignees: [...new Set([...(targetRecord.assignees ?? []), assignee])],
-      },
-    },
-  };
+  return accountPillPatch([
+    { ...source, pills: source.pills.filter((pill) => pill !== text) },
+    { ...target, pills: [...new Set([...target.pills, text])] },
+  ]);
 }
 
 /** Verify authoritative save responses before reporting success to the editor. */
@@ -95,6 +129,13 @@ export function accountLedgerContainsPatch(
   ledger: AccountLedger,
   patch: AccountLedgerPatch,
 ): boolean {
+  for (const [key, expected] of Object.entries(patch.rowPills ?? {})) {
+    const actual = ledger.rowPills?.[key];
+    if (
+      expected === null ? actual !== undefined : JSON.stringify(actual) !== JSON.stringify(expected)
+    )
+      return false;
+  }
   for (const collection of ["accounts", "events", "notes"] as const) {
     const changes = patch[collection];
     if (!changes) continue;
@@ -467,7 +508,7 @@ export function collectAccountDates(
       if (!credit.expiresAt || credit.count === 0) continue;
       const parts = zonedParts(Date.parse(credit.expiresAt), timeZone);
       dates.push({
-        id: `live:${account.id}:${credit.id}`,
+        id: `live:${account.id}:${credit.id}:${credit.expiresAt}`,
         environmentId: account.environmentId,
         service: account.service,
         account: account.label,

@@ -193,6 +193,9 @@ function mergeAccountLedger(
   }
   return {
     accounts,
+    ...(current.rowPills !== undefined || patch.rowPills !== undefined
+      ? { rowPills: mergeSettingsEntries(current.rowPills ?? {}, patch.rowPills ?? {}) }
+      : {}),
     events:
       patch.events === undefined
         ? current.events

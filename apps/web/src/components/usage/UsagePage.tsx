@@ -229,7 +229,7 @@ export function UsagePage() {
                 automatic,
                 afterPending,
               ),
-              ...(!automatic && showingAccounts && presentation.serverConfig.accountsVersion === 2
+              ...(!automatic && showingAccounts && presentation.serverConfig.accountsVersion === 3
                 ? [
                     executeAtomQuery(
                       registry,

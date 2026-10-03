@@ -15,6 +15,13 @@ const event = {
 };
 
 describe("account dates", () => {
+  it("round-trips full-text row pills and rejects duplicates or empty text", () => {
+    expect(
+      decodeLedgerPatch({ rowPills: { date: ["Amal using", "A, B"], removed: null } }).rowPills,
+    ).toEqual({ date: ["Amal using", "A, B"], removed: null });
+    expect(() => decodeLedgerPatch({ rowPills: { row: [""] } })).toThrow();
+    expect(() => decodeLedgerPatch({ rowPills: { row: ["same", "same"] } })).toThrow();
+  });
   it("keeps a date-only deadline local and round-trips a leap day", () => {
     const decoded = decodeEvent(event);
     expect(encodeEvent(decoded)).toEqual({ ...event, recurrence: "none" });

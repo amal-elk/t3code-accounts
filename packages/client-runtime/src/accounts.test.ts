@@ -15,7 +15,11 @@ import {
   primaryAccountWindow,
   collectAccounts,
   collectAccountDates,
-  moveAccountAssignment,
+  moveAccountPill,
+  accountPillRow,
+  accountPillRowKey,
+  accountPillPatch,
+  type AccountPillRow,
   nextAccountEventDate,
   type AccountLedger,
   type AccountRow,
@@ -445,106 +449,134 @@ describe("Authoritative annotation responses", () => {
   });
 });
 
-describe("Account assignments", () => {
-  const source: AccountRow = {
-    id: "source",
+describe("Account pills", () => {
+  it("retains the account identity when adding a pill to a provider-owned row", () => {
+    const account = collectAccounts(new Map([[local, presentation()]]), now)[0]!;
+    const row = accountPillRow(
+      { accounts: {}, events: {}, notes: {} },
+      { kind: "account", id: account.id, environmentId: local, label: account.label, account },
+    );
+    expect(accountPillPatch([{ ...row, pills: ["Needs review"] }])).toEqual({
+      accounts: { [account.id]: { service: "Codex", label: "person@example.test" } },
+      rowPills: { [accountPillRowKey(row)]: ["Needs review"] },
+    });
+  });
+  it("does not attach a pill to the next credit after a different credit expires", () => {
+    const dateId = (expiresAt: string) => {
+      const map = new Map([
+        [
+          local,
+          presentation([
+            provider({
+              usageLimits: {
+                ...limits,
+                resetCredits: { availableCount: 1, nextExpiresAt: expiresAt },
+              },
+            }),
+          ]),
+        ],
+      ]);
+      return collectAccountDates(map, collectAccounts(map, now), "America/Los_Angeles", now)[0]!.id;
+    };
+    expect(dateId("2026-10-22T19:00:00Z")).not.toBe(dateId("2026-10-29T19:00:00Z"));
+  });
+  const source: AccountPillRow = {
+    id: "shared-id",
+    kind: "account",
     environmentId: local,
-    environmentLabel: "Local",
-    service: "Codex",
-    label: "source@example.test",
-    saved: {
+    label: "source",
+    pills: ["Amal using", "Needs review"],
+  };
+  const date: AccountPillRow = {
+    id: "shared-id",
+    kind: "date",
+    environmentId: local,
+    label: "Credits expire",
+    pills: ["Alex using"],
+  };
+  it("moves full text across row types, preserving every other pill", () => {
+    expect(moveAccountPill(source, date, "Needs review")).toEqual({
+      rowPills: {
+        [accountPillRowKey(source)]: ["Amal using"],
+        [accountPillRowKey(date)]: ["Alex using", "Needs review"],
+      },
+    });
+    expect(source.pills).toEqual(["Amal using", "Needs review"]);
+  });
+  it("removes an empty source and does not duplicate a destination pill", () => {
+    expect(moveAccountPill({ ...source, pills: ["Alex using"] }, date, "Alex using")).toEqual({
+      rowPills: {
+        [accountPillRowKey(source)]: null,
+        [accountPillRowKey(date)]: ["Alex using"],
+      },
+    });
+  });
+  it("rejects absent pills, the same row, and cross-environment moves", () => {
+    expect(moveAccountPill(source, source, "Amal using")).toBeNull();
+    expect(moveAccountPill(source, date, "Missing")).toBeNull();
+    expect(moveAccountPill(source, { ...date, environmentId: remote }, "Amal using")).toBeNull();
+  });
+  it("turns retained names into editable full-text pills without changing account details", () => {
+    const account: AccountRow = {
+      id: "work",
+      environmentId: local,
+      environmentLabel: "Local",
       service: "Codex",
-      label: "source@example.test",
-      assignees: ["Amal"],
-      resetAt: "2026-10-03T19:00:00Z",
-      resetNotTriggered: true,
-    },
-    live: true,
-    limits,
-    resetAt: limits.windows[0]!.resetsAt,
-    resetSource: "live",
-    trigger: null,
-  };
-  const target: AccountRow = {
-    ...source,
-    id: "target",
-    label: "target@example.test",
-    saved: { service: "Codex", label: "target@example.test", billingDay: 19 },
-  };
-
-  it("moves a person without discarding either account's saved details", () => {
-    expect(moveAccountAssignment(source, target, "Amal")).toEqual({
+      label: "work@example.test",
+      saved: {
+        service: "Codex",
+        label: "work@example.test",
+        assignees: ["Amal", "Alex"],
+        resetAt: "2026-10-03T19:00:00Z",
+        resetNotTriggered: true,
+      },
+      live: true,
+      limits,
+      resetAt: undefined,
+      resetSource: undefined,
+      trigger: null,
+    };
+    const ledger: AccountLedger = { accounts: { work: account.saved! }, events: {}, notes: {} };
+    const row = accountPillRow(ledger, {
+      kind: "account",
+      id: account.id,
+      environmentId: local,
+      label: account.label,
+      account,
+    });
+    expect(row.pills).toEqual(["Amal using", "Alex using"]);
+    const patch = accountPillPatch([{ ...row, pills: [...row.pills, "Borrowed, until Friday"] }]);
+    expect(patch).toEqual({
+      rowPills: {
+        [accountPillRowKey(row)]: ["Amal using", "Alex using", "Borrowed, until Friday"],
+      },
       accounts: {
-        source: {
+        work: {
           service: "Codex",
-          label: "source@example.test",
+          label: "work@example.test",
           resetAt: "2026-10-03T19:00:00Z",
           resetNotTriggered: true,
         },
-        target: { ...target.saved, assignees: ["Amal"] },
       },
     });
-    expect(source.saved?.assignees).toEqual(["Amal"]);
-    expect(target.saved?.assignees).toBeUndefined();
-  });
-
-  it("adds a person alongside the people already using the target account", () => {
+    expect(account.saved?.assignees).toEqual(["Amal", "Alex"]);
     expect(
-      moveAccountAssignment(
-        source,
-        { ...target, saved: { ...target.saved!, assignees: ["Alex"] } },
-        "Amal",
-      ),
-    ).toEqual({
-      accounts: {
-        source: {
-          service: "Codex",
-          label: "source@example.test",
-          resetAt: "2026-10-03T19:00:00Z",
-          resetNotTriggered: true,
-        },
-        target: { ...target.saved, assignees: ["Alex", "Amal"] },
-      },
-    });
+      accountPillRow({ ...ledger, rowPills: { [accountPillRowKey(row)]: [] } }, row).pills,
+    ).toEqual([]);
   });
-
-  it("moves only the dragged person out of a shared account", () => {
-    const shared = { ...source, saved: { ...source.saved!, assignees: ["Alex", "Amal"] } };
-    expect(moveAccountAssignment(shared, target, "Amal")?.accounts).toEqual({
-      source: { ...shared.saved, assignees: ["Alex"] },
-      target: { ...target.saved, assignees: ["Amal"] },
-    });
-    expect(shared.saved.assignees).toEqual(["Alex", "Amal"]);
-  });
-
-  it("keeps an existing destination assignment once when moving a duplicate", () => {
-    const shared = { ...source, saved: { ...source.saved!, assignees: ["Alex", "Amal"] } };
-    const occupied = { ...target, saved: { ...target.saved!, assignees: ["Amal"] } };
-    expect(moveAccountAssignment(shared, occupied, "Amal")?.accounts).toEqual({
-      source: { ...shared.saved, assignees: ["Alex"] },
-      target: occupied.saved,
-    });
-  });
-
-  it("creates only an annotation for an account whose usage is provider-owned", () => {
-    expect(moveAccountAssignment(source, { ...target, saved: undefined }, "Amal")).toEqual({
-      accounts: {
-        source: {
-          service: "Codex",
-          label: "source@example.test",
-          resetAt: "2026-10-03T19:00:00Z",
-          resetNotTriggered: true,
-        },
-        target: { service: "Codex", label: "target@example.test", assignees: ["Amal"] },
-      },
-    });
-  });
-
-  it("ignores the same account, absent assignments, and moves across environments", () => {
-    expect(moveAccountAssignment(source, source, "Amal")).toBeNull();
-    expect(moveAccountAssignment({ ...source, saved: undefined }, target, "Amal")).toBeNull();
-    expect(moveAccountAssignment(source, { ...target, environmentId: remote }, "Amal")).toBeNull();
-    expect(moveAccountAssignment(source, target, "Alex")).toBeNull();
+  it("verifies that a server actually retained the pill patch, including deletion", () => {
+    const ledger: AccountLedger = {
+      accounts: {},
+      events: {},
+      notes: {},
+      rowPills: { one: ["A, B"] },
+    };
+    expect(accountLedgerContainsPatch(ledger, { rowPills: { one: ["A, B"] } })).toBe(true);
+    expect(accountLedgerContainsPatch(ledger, { rowPills: { one: ["A", "B"] } })).toBe(false);
+    expect(accountLedgerContainsPatch(ledger, { rowPills: { one: null } })).toBe(false);
+    expect(
+      accountLedgerContainsPatch({ ...ledger, rowPills: {} }, { rowPills: { one: null } }),
+    ).toBe(true);
   });
 });
 

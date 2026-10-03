@@ -10,13 +10,14 @@ desktop when the terminal is not focused. Customize `usage.open` in
 allowance and reset time. Accounts sort by the next reset, and banked-credit expirations group
 by date beneath each service. An absent percentage means the provider has not reported it.
 
-Edit an account to record who is using it, or add dates and notes for any service. Credit
+Add dates and notes for any service. Credit
 expirations, billing renewals, and reminders can belong to one account or the whole workspace.
-Separate names with commas when recording several people on an account. Each person's “using”
-pill moves independently: drag it onto another account to add that person alongside anyone already
-there. Other people stay on their current accounts. Both accounts must belong to the same connected
+Use the small **+** on any account, date, or note row to add a pill with your own text.
+Existing “Amal using” and “Alex using” pills work the same way. Click a pill to rename or delete it,
+or drag it onto another row alongside its existing pills. Both rows must belong to the same connected
 environment. You can also focus a pill, press Space, use the arrow keys to move, and press Space
-again to drop; Escape cancels. This updates your account tracking, without changing provider logins.
+again to drop; Escape cancels. Pills update your tracking without changing provider logins, usage,
+or credit deadlines.
 Add a date in its section, then choose the account, date, optional time, and label. New times use
 your local time zone; editing preserves the entry's existing time zone. Cursor refresh and billing
 dates repeat monthly. Existing recurring entries keep their schedule and show their next occurrence.
