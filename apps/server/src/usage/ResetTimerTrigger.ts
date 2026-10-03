@@ -149,6 +149,9 @@ export const make = Effect.gen(function* () {
         detail: "Fresh weekly limits are required to trigger this account safely.",
       });
     }
+    // Codex can report a moving future reset date before its first inference.
+    // An explicit row click sends a test whether or not a timer is already active.
+    if (driver === "codex") return;
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     if (hasActiveWeeklyTimer(driver, limits, now)) {
       return yield* new AccountActionError({
@@ -181,12 +184,18 @@ export const make = Effect.gen(function* () {
     function* (input) {
       const saved = yield* settings.getSettings;
       const record = saved.accountLedger.accounts[input.ledgerAccountId];
-      if (!record?.resetNotTriggered || !serviceDriver(record)) {
+      const driver = record && serviceDriver(record);
+      if (!record || !driver) {
+        return yield* new AccountActionError({
+          detail: "Save a supported account before sending a test message.",
+        });
+      }
+      if (driver === "claudeAgent" && !record.resetNotTriggered) {
         return yield* new AccountActionError({
           detail: "First confirm that this account reset and its timer has not started.",
         });
       }
-      const accountKey = `${serviceDriver(record)}:${normalize(record.label)}`;
+      const accountKey = `${driver}:${normalize(record.label)}`;
       const acquire = Ref.modify(active, (current) => {
         if (current.has(accountKey)) return [false, current] as const;
         return [true, new Set([...current, accountKey])] as const;
@@ -296,13 +305,14 @@ export const make = Effect.gen(function* () {
         // Never retry inference automatically, even when the provider might have accepted it.
         const latest = (yield* settings.getSettings).accountLedger.accounts[input.ledgerAccountId];
         if (
-          !latest?.resetNotTriggered ||
+          !latest ||
+          (driver === "claudeAgent" && !latest.resetNotTriggered) ||
           latest.service !== record.service ||
           latest.label !== record.label
         ) {
           return yield* new AccountActionError({
             detail:
-              "The saved reset observation changed while preparing the message. Refresh before triggering.",
+              "The saved account changed while preparing the message. Refresh before triggering.",
           });
         }
         const sent = yield* prepared.send.pipe(Effect.result);
@@ -312,24 +322,24 @@ export const make = Effect.gen(function* () {
             ? observed.success
             : undefined;
         const confirmed = hasActiveWeeklyTimer(
-          serviceDriver(record)!,
+          driver,
           limits,
           DateTime.toEpochMillis(yield* DateTime.now),
         );
-        if (confirmed) yield* clearConfirmedFlag(input, record);
-        if (sent._tag === "Failure" && !confirmed) {
+        if (sent._tag === "Failure" && (driver === "codex" || !confirmed)) {
           return yield* new AccountActionError({
             detail:
               "The test message could not be confirmed. Its limits were re-read; check this account before explicitly retrying.",
           });
         }
+        if (confirmed && record.resetNotTriggered) yield* clearConfirmedFlag(input, record);
         return {
           model: prepared.model,
           ...(limits ? { limits } : {}),
           ...(!confirmed
             ? {
                 warning:
-                  "Test message sent, but the provider has not reported a new weekly timer. Refresh before retrying; the saved reset state is unchanged.",
+                  "Test message sent, but its weekly timer could not be confirmed. Refresh before retrying.",
               }
             : sent._tag === "Failure"
               ? {

@@ -224,13 +224,13 @@ export function collectAccounts(
         : fresh
           ? next
           : previous;
-    // Prefer a direct authenticated provider for the trigger. A reporting-only
-    // source never borrows another account's provider route.
+    // Prefer the connection that successfully read this account's quota, within
+    // the annotation owner's environment. A failed duplicate may lack usable auth.
     const trigger = winner.saved
-      ? ([previous.trigger, next.trigger].find(
+      ? ([winner.trigger, previous.trigger, next.trigger].find(
           (route) => route?.environmentId === winner.environmentId,
         ) ?? null)
-      : (previous.trigger ?? next.trigger);
+      : (winner.trigger ?? previous.trigger ?? next.trigger);
     rows.set(identity, { ...winner, trigger });
   };
   const row = (

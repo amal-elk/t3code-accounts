@@ -198,12 +198,20 @@ export function AccountsSection({
     clearAssignmentFeedback,
   } = useAccountAssignmentMove(accounts, save);
   const trigger = async (account: AccountRow) => {
-    if (!account.trigger || !accountResetNotTriggered(account, now) || triggeringRef.current)
+    if (
+      !account.trigger ||
+      (account.service !== "Codex" && !accountResetNotTriggered(account, now)) ||
+      triggeringRef.current
+    )
       return;
     triggeringRef.current = true;
     setTriggering(account.id);
     setStatuses((previous) => ({ ...previous, [account.id]: "" }));
     try {
+      if (!account.saved)
+        await save(account.environmentId, {
+          accounts: { [account.id]: { service: account.service, label: account.label } },
+        });
       const result = await triggerTimer({
         environmentId: account.trigger.environmentId,
         input: {
@@ -224,7 +232,7 @@ export function AccountsSection({
             (result.value.limits?.windows.some(
               (window) => window.resetsAt && Date.parse(window.resetsAt) > Date.now(),
             )
-              ? `Timer confirmed · ${result.value.model}`
+              ? `Test sent · ${result.value.model} · timer confirmed`
               : "Request sent. Refresh to confirm the timer."),
         }));
       } else {
@@ -415,9 +423,12 @@ export function AccountsSection({
                         ?.connected ?? false;
                     const triggerEnabled =
                       account.trigger &&
+                      selected.get(account.trigger.environmentId)?.connection.phase ===
+                        "connected" &&
                       selected.get(account.trigger.environmentId)?.serverConfig?.accountsVersion ===
                         2;
                     const notTriggered = accountResetNotTriggered(account, now);
+                    const showTrigger = service === "Codex" || notTriggered;
                     const resetDetail = notTriggered
                       ? triggerEnabled
                         ? "Sends “test” to a small supported model"
@@ -501,14 +512,6 @@ export function AccountsSection({
                                 >
                                   Reset, not triggered
                                 </span>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  disabled={!triggerEnabled || triggering !== null}
-                                  onClick={() => void trigger(account)}
-                                >
-                                  {triggering === account.id ? "Triggering…" : "Trigger"}
-                                </Button>
                               </div>
                             ) : (
                               <Tooltip>
@@ -522,6 +525,28 @@ export function AccountsSection({
                                 <TooltipPopup>{resetDetail}</TooltipPopup>
                               </Tooltip>
                             )}
+                            {showTrigger ? (
+                              <Tooltip>
+                                <TooltipTrigger render={<span />}>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={!triggerEnabled || triggering !== null}
+                                    aria-label={`Trigger ${account.label}`}
+                                    onClick={() => void trigger(account)}
+                                  >
+                                    {triggering === account.id ? "Triggering…" : "Trigger"}
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipPopup>
+                                  {triggerEnabled
+                                    ? service === "Codex"
+                                      ? "Sends “test” to a small supported model with low reasoning. An active timer keeps its reset time."
+                                      : "Sends “test” to a small supported model to start its timer."
+                                    : "Connect this account to send a test message."}
+                                </TooltipPopup>
+                              </Tooltip>
+                            ) : null}
                             <Button
                               variant="ghost"
                               size="icon-xs"

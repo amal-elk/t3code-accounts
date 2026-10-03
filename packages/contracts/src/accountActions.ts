@@ -6,7 +6,7 @@ import { ServerProviderUsageLimits } from "./providerUsageLimits.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 
 const AccountActionIdentity = {
-  /** Pins this action to the saved, explicitly observed reset state. */
+  /** Pins this action to the saved account identity. */
   ledgerAccountId: TrimmedNonEmptyString,
   expectedAccountEmail: Schema.optional(TrimmedNonEmptyString),
   expectedCredentialFingerprint: Schema.optional(TrimmedNonEmptyString),

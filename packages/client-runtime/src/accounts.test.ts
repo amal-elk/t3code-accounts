@@ -217,12 +217,18 @@ describe("Accounts view selection", () => {
         [good, failed],
         [failed, good],
       ]) {
-        const rows = collectAccounts(new Map([[local, presentation(providers)]]), now);
-        expect(rows).toHaveLength(1);
-        expect(rows[0]?.limits?.windows[0]?.usedPercent).toBe(100);
-        expect(rows[0]?.limits?.checkedAt).toBe(limits.checkedAt);
-        expect(rows[0]?.limits?.unavailable).toBeUndefined();
-        expect(rows[0]?.limits?.resetCredits?.availableCount).toBe(0);
+        for (const ledger of [
+          {},
+          { accounts: { person: { service: "Codex", label: "person@example.test" } } },
+        ]) {
+          const rows = collectAccounts(new Map([[local, presentation(providers, ledger)]]), now);
+          expect(rows).toHaveLength(1);
+          expect(rows[0]?.limits?.windows[0]?.usedPercent).toBe(100);
+          expect(rows[0]?.limits?.checkedAt).toBe(limits.checkedAt);
+          expect(rows[0]?.limits?.unavailable).toBeUndefined();
+          expect(rows[0]?.limits?.resetCredits?.availableCount).toBe(0);
+          expect(rows[0]?.trigger?.input).toEqual({ instanceId: good.instanceId });
+        }
       }
     },
   );

@@ -47,6 +47,7 @@ const fixture = Effect.fnUntraced(function* (
     email?: string;
     models?: ReadonlyArray<ServerProviderModel>;
     activeTimer?: boolean;
+    usedPercent?: number;
     observedReset?: boolean;
     send?: Effect.Effect<void, AccountActionError>;
     confirmTimer?: boolean;
@@ -94,7 +95,7 @@ const fixture = Effect.fnUntraced(function* (
                   id: driver === "codex" ? "secondary" : "seven_day",
                   kind: "weekly",
                   label: "Weekly",
-                  usedPercent: 0,
+                  usedPercent: options.usedPercent ?? 0,
                   ...(timer ? { resetsAt: "2099-01-01T00:00:00Z" } : {}),
                 },
               ],
@@ -195,7 +196,7 @@ const fixture = Effect.fnUntraced(function* (
 });
 
 describe("ResetTimerTrigger", () => {
-  it.effect("sends only after a saved reset observation and saves only the reported timer", () =>
+  it.effect("sends one small-model test and saves only the reported timer", () =>
     Effect.gen(function* () {
       const test = yield* fixture();
       const result = yield* test.service.trigger(input);
@@ -208,11 +209,18 @@ describe("ResetTimerTrigger", () => {
     }).pipe(Effect.provide(ServerSettingsService.layerTest())),
   );
 
-  it.effect("does not infer a reset from 100% remaining", () =>
+  it.effect("allows an explicit Codex test without a manual reset flag or an inferred date", () =>
     Effect.gen(function* () {
-      const test = yield* fixture({ observedReset: false });
-      expect((yield* test.service.trigger(input).pipe(Effect.result))._tag).toBe("Failure");
-      expect(test.sent()).toBe(0);
+      const test = yield* fixture({ observedReset: false, confirmTimer: false });
+      const result = yield* test.service.trigger(input);
+      expect(test.sent()).toBe(1);
+      expect(result.limits?.windows[0]?.resetsAt).toBeUndefined();
+      expect(result.warning).toBeDefined();
+      expect((yield* test.settings.getSettings).accountLedger.accounts.alice).toEqual({
+        service: "Codex",
+        label: "alice@example.com",
+        resetNotTriggered: false,
+      });
     }).pipe(Effect.provide(ServerSettingsService.layerTest())),
   );
 
@@ -241,9 +249,45 @@ describe("ResetTimerTrigger", () => {
     }).pipe(Effect.provide(ServerSettingsService.layerTest())),
   );
 
-  it.effect("refuses a duplicate after the provider reports an active timer even at 0% usage", () =>
+  it.effect(
+    "allows an explicit Codex test with a reported timer without changing its reset date",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* fixture({ activeTimer: true, observedReset: false });
+        const result = yield* test.service.trigger(input);
+        expect(result.limits?.windows[0]?.resetsAt).toBe("2099-01-01T00:00:00Z");
+        expect(test.sent()).toBe(1);
+      }).pipe(Effect.provide(ServerSettingsService.layerTest())),
+  );
+
+  it.effect("allows a Codex row test after the account has already been used", () =>
     Effect.gen(function* () {
-      const test = yield* fixture({ activeTimer: true });
+      const test = yield* fixture({ activeTimer: true, observedReset: false, usedPercent: 40 });
+      const result = yield* test.service.trigger(input);
+      expect(result.limits?.windows[0]?.usedPercent).toBe(40);
+      expect(result.limits?.windows[0]?.resetsAt).toBe("2099-01-01T00:00:00Z");
+      expect(test.sent()).toBe(1);
+    }).pipe(Effect.provide(ServerSettingsService.layerTest())),
+  );
+
+  it.effect(
+    "does not claim a failed Codex message succeeded because a timer was already active",
+    () =>
+      Effect.gen(function* () {
+        const test = yield* fixture({
+          activeTimer: true,
+          observedReset: false,
+          send: Effect.fail(new AccountActionError({ detail: "Interrupted response" })),
+        });
+        expect((yield* test.service.trigger(input).pipe(Effect.result))._tag).toBe("Failure");
+        expect(test.sent()).toBe(1);
+        expect(test.refreshes()).toBe(2);
+      }).pipe(Effect.provide(ServerSettingsService.layerTest())),
+  );
+
+  it.effect("still requires a saved reset observation before sending a Claude test", () =>
+    Effect.gen(function* () {
+      const test = yield* fixture({ driver: "claudeAgent", observedReset: false });
       expect((yield* test.service.trigger(input).pipe(Effect.result))._tag).toBe("Failure");
       expect(test.sent()).toBe(0);
     }).pipe(Effect.provide(ServerSettingsService.layerTest())),
