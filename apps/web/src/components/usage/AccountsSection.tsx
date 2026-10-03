@@ -407,12 +407,13 @@ export function AccountsSection({
           setDraggedPill(null);
           const source = pillRows.find((row) => pillRowKey(row) === active.data.current?.rowKey);
           const target = pillRows.find((row) => pillRowKey(row) === over?.id);
-          if (!source || !target || !draggedPill) return;
-          if (!source.pills.includes(draggedPill.text)) {
+          const text = active.data.current?.text;
+          if (!source || !target || typeof text !== "string") return;
+          if (!source.pills.includes(text)) {
             setPillError("This pill changed while you were dragging. Try again.");
             return;
           }
-          void movePill(source, target, draggedPill.text).catch(() => {});
+          void movePill(source, target, text).catch(() => {});
         }}
       >
         {services.map((service) => {
