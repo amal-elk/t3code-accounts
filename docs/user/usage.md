@@ -26,8 +26,8 @@ provider's subscription or consume a credit. Connected official servers can show
 need the Accounts fork server to save these details.
 
 If you have confirmed that an account reset before its timer started, record **Reset, not
-triggered**. Codex rows also let you trigger a test directly beside their reset time without
-recording that flag first. **Trigger** sends one short test message to a supported small model
+triggered**. For Codex, open the three-dot menu beside the reset time and choose **Trigger**
+without recording that flag first. **Trigger** sends one short test message to a supported small model
 on that account, using low reasoning for Codex, then reads its limits again. An already active timer keeps
 its reset time. The timer appears only after the provider reports it. If a
 message or timer cannot be confirmed, refresh and check the account before trying again.

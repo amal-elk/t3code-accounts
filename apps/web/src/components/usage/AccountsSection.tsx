@@ -21,13 +21,14 @@ import {
 import { remainingPercent } from "@t3tools/shared/usageLimits";
 import { AsyncResult } from "effect/unstable/reactivity";
 import * as Option from "effect/Option";
-import { EyeIcon, EyeOffIcon, PlusIcon, PencilIcon } from "lucide-react";
+import { EyeIcon, EyeOffIcon, MoreHorizontalIcon, PlusIcon, PencilIcon } from "lucide-react";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { RedactedSensitiveText } from "../settings/RedactedSensitiveText";
 import { Button } from "../ui/button";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
   AccountsEditorDialog,
@@ -83,7 +84,6 @@ function exactTimestamp(value: string, timeZone: string) {
     hour: "numeric",
     hour12: true,
     minute: "2-digit",
-    timeZoneName: "short",
   }).format(new Date(value));
 }
 
@@ -428,7 +428,6 @@ export function AccountsSection({
                       selected.get(account.trigger.environmentId)?.serverConfig?.accountsVersion ===
                         2;
                     const notTriggered = accountResetNotTriggered(account, now);
-                    const showTrigger = service === "Codex" || notTriggered;
                     const resetDetail = notTriggered
                       ? triggerEnabled
                         ? "Sends “test” to a small supported model"
@@ -525,43 +524,79 @@ export function AccountsSection({
                                 <TooltipPopup>{resetDetail}</TooltipPopup>
                               </Tooltip>
                             )}
-                            {showTrigger ? (
-                              <Tooltip>
-                                <TooltipTrigger render={<span />}>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
+                            {service === "Codex" ? (
+                              <Menu>
+                                <MenuTrigger
+                                  render={
+                                    <Button
+                                      variant="ghost"
+                                      size="icon-xs"
+                                      aria-label={`Account actions for ${account.label}`}
+                                    />
+                                  }
+                                >
+                                  <MoreHorizontalIcon />
+                                </MenuTrigger>
+                                <MenuPopup align="end">
+                                  <MenuItem
                                     disabled={!triggerEnabled || triggering !== null}
-                                    aria-label={`Trigger ${account.label}`}
                                     onClick={() => void trigger(account)}
                                   >
                                     {triggering === account.id ? "Triggering…" : "Trigger"}
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipPopup>
-                                  {triggerEnabled
-                                    ? service === "Codex"
-                                      ? "Sends “test” to a small supported model with low reasoning. An active timer keeps its reset time."
-                                      : "Sends “test” to a small supported model to start its timer."
-                                    : "Connect this account to send a test message."}
-                                </TooltipPopup>
-                              </Tooltip>
-                            ) : null}
-                            <Button
-                              variant="ghost"
-                              size="icon-xs"
-                              disabled={!enabled || movingAssignment}
-                              aria-label="Edit account details"
-                              onClick={() =>
-                                setEditor({
-                                  kind: "account",
-                                  environmentId: account.environmentId,
-                                  account,
-                                })
-                              }
-                            >
-                              <PencilIcon />
-                            </Button>
+                                  </MenuItem>
+                                  <MenuItem
+                                    disabled={!enabled || movingAssignment}
+                                    onClick={() =>
+                                      setEditor({
+                                        kind: "account",
+                                        environmentId: account.environmentId,
+                                        account,
+                                      })
+                                    }
+                                  >
+                                    Edit account details
+                                  </MenuItem>
+                                </MenuPopup>
+                              </Menu>
+                            ) : (
+                              <>
+                                {notTriggered ? (
+                                  <Tooltip>
+                                    <TooltipTrigger render={<span />}>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        disabled={!triggerEnabled || triggering !== null}
+                                        aria-label={`Trigger ${account.label}`}
+                                        onClick={() => void trigger(account)}
+                                      >
+                                        {triggering === account.id ? "Triggering…" : "Trigger"}
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipPopup>
+                                      {triggerEnabled
+                                        ? "Sends “test” to a small supported model to start its timer."
+                                        : "Connect this account to send a test message."}
+                                    </TooltipPopup>
+                                  </Tooltip>
+                                ) : null}
+                                <Button
+                                  variant="ghost"
+                                  size="icon-xs"
+                                  disabled={!enabled || movingAssignment}
+                                  aria-label="Edit account details"
+                                  onClick={() =>
+                                    setEditor({
+                                      kind: "account",
+                                      environmentId: account.environmentId,
+                                      account,
+                                    })
+                                  }
+                                >
+                                  <PencilIcon />
+                                </Button>
+                              </>
+                            )}
                           </div>
                           {notTriggered ? (
                             <div className="mt-0.5 text-3xs text-muted-foreground">
